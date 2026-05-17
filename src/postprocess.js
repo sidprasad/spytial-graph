@@ -77,7 +77,8 @@ function nodeHalfExtents(g) {
 }
 
 // Clip a line endpoint to the AABB of the target node centered at (tx, ty).
-// Approximates the boundary intersection; good enough for the prototype.
+// Approximates the boundary intersection; used as a safety fallback when
+// the orthogonal router can't pick a clean face.
 function clipToBox(sx, sy, tx, ty, hx, hy) {
   const dx = sx - tx;
   const dy = sy - ty;
@@ -90,10 +91,99 @@ function clipToBox(sx, sy, tx, ty, hx, hy) {
   return { x: tx + dx * t, y: ty + dy * t };
 }
 
+// Orthogonal Z-route between two nodes. Picks the dominant axis from the
+// (source → target) vector, exits the source perpendicular to that axis'
+// face, enters the target perpendicular to the opposing face, and bends
+// once at the midpoint of the dominant axis.
+//
+// Endpoints sit on the node boundary (no AABB clipping needed), and the
+// path is two segments with a rounded corner. For a flowchart-style
+// vertical layout this produces clean down→across→down (Z) edges.
+//
+// Returns { d, midX, midY } so labels can be placed at the corner.
+function routeOrthogonal(s, t) {
+  const dx = t.x - s.x;
+  const dy = t.y - s.y;
+  const verticalMajor = Math.abs(dy) >= Math.abs(dx);
+
+  let sExit, tEnter, mid;
+  if (verticalMajor) {
+    const yDir = dy >= 0 ? 1 : -1;
+    sExit = { x: s.x, y: s.y + yDir * s.hy };
+    tEnter = { x: t.x, y: t.y - yDir * t.hy };
+    const midY = (sExit.y + tEnter.y) / 2;
+    mid = { x: (sExit.x + tEnter.x) / 2, y: midY };
+    // Path: source-face → drop to midY → slide to target x → enter target.
+    return {
+      d: makeRoundedPath([
+        sExit,
+        { x: sExit.x, y: midY },
+        { x: tEnter.x, y: midY },
+        tEnter,
+      ]),
+      midX: mid.x,
+      midY: mid.y,
+    };
+  } else {
+    const xDir = dx >= 0 ? 1 : -1;
+    sExit = { x: s.x + xDir * s.hx, y: s.y };
+    tEnter = { x: t.x - xDir * t.hx, y: t.y };
+    const midX = (sExit.x + tEnter.x) / 2;
+    mid = { x: midX, y: (sExit.y + tEnter.y) / 2 };
+    return {
+      d: makeRoundedPath([
+        sExit,
+        { x: midX, y: sExit.y },
+        { x: midX, y: tEnter.y },
+        tEnter,
+      ]),
+      midX: mid.x,
+      midY: mid.y,
+    };
+  }
+}
+
+// Turn a polyline into an SVG path with rounded corners at interior
+// vertices. Uses a small quadratic curve at each bend (~ corner radius
+// 8 by default) so edges look smooth like mermaid's defaults rather
+// than hand-drawn L-shapes.
+function makeRoundedPath(points, radius = 8) {
+  if (points.length < 2) return '';
+  if (points.length === 2) {
+    return `M ${points[0].x},${points[0].y} L ${points[1].x},${points[1].y}`;
+  }
+  const out = [`M ${points[0].x},${points[0].y}`];
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const next = points[i + 1];
+    // Approach corner along (prev → curr), pull back by radius (or half
+    // the segment, whichever is smaller — avoids overshooting on short
+    // segments).
+    const inDx = curr.x - prev.x;
+    const inDy = curr.y - prev.y;
+    const inLen = Math.hypot(inDx, inDy) || 1;
+    const inR = Math.min(radius, inLen / 2);
+    const inPt = { x: curr.x - (inDx / inLen) * inR, y: curr.y - (inDy / inLen) * inR };
+
+    const outDx = next.x - curr.x;
+    const outDy = next.y - curr.y;
+    const outLen = Math.hypot(outDx, outDy) || 1;
+    const outR = Math.min(radius, outLen / 2);
+    const outPt = { x: curr.x + (outDx / outLen) * outR, y: curr.y + (outDy / outLen) * outR };
+
+    out.push(`L ${inPt.x},${inPt.y}`);
+    out.push(`Q ${curr.x},${curr.y} ${outPt.x},${outPt.y}`);
+  }
+  const last = points[points.length - 1];
+  out.push(`L ${last.x},${last.y}`);
+  return out.join(' ');
+}
+
 // Move every node group to its spytial-target position, then redraw every
-// edge as a straight line between updated, clipped endpoints. Returns
-// summary stats for verification.
-export function applyLayout(svgRoot, spytialPositions, parsedEdges) {
+// edge as an orthogonal Z-route. Optionally draws group rectangles when
+// `layoutGroups` is supplied. Returns summary stats for verification.
+export function applyLayout(svgRoot, spytialPositions, parsedEdges, layoutGroups = []) {
   // 1. Position lookup keyed by user id.
   const targetById = new Map();
   for (const p of spytialPositions) targetById.set(p.id, p);
@@ -116,8 +206,8 @@ export function applyLayout(svgRoot, spytialPositions, parsedEdges) {
     }
   }
 
-  // 3. Redraw edges. Try LS-/LE- class encoding first; fall back to
-  //    source-order matching against parsedEdges.
+  // 3. Redraw edges with orthogonal Z-routes. Try LS-/LE- class encoding
+  //    first; fall back to source-order matching against parsedEdges.
   const allPaths = svgRoot.querySelectorAll(
     'g.edgePaths path, g.edges path, path.flowchart-link, path[class*="flowchart-link"]'
   );
@@ -125,6 +215,7 @@ export function applyLayout(svgRoot, spytialPositions, parsedEdges) {
   let edgesRedrawn = 0;
   let edgesViaFallback = 0;
   const pathsArr = Array.from(allPaths);
+  const midByEdge = new Map(); // `${src}->${tgt}` → { midX, midY }
 
   for (let i = 0; i < pathsArr.length; i++) {
     const path = pathsArr[i];
@@ -148,19 +239,37 @@ export function applyLayout(svgRoot, spytialPositions, parsedEdges) {
     const t = finalPos.get(tgt);
     if (!s || !t) continue;
 
-    const endpoint = clipToBox(s.x, s.y, t.x, t.y, t.hx, t.hy);
-    const startpoint = clipToBox(t.x, t.y, s.x, s.y, s.hx, s.hy);
-    path.setAttribute('d', `M ${startpoint.x},${startpoint.y} L ${endpoint.x},${endpoint.y}`);
+    const route = routeOrthogonal(s, t);
+    path.setAttribute('d', route.d);
+    midByEdge.set(`${src}->${tgt}`, { midX: route.midX, midY: route.midY });
     edgesRedrawn++;
   }
 
-  // 4. Also clear edge labels (mermaid positions them based on the original
-  //    path geometry; after we straighten, they sit in the wrong place).
-  //    Move each <g class="edgeLabel"> to the midpoint of its underlying
-  //    edge if we can identify it; otherwise leave alone.
-  // (Skipped in v1 — labels are not used by the parser anyway.)
+  // 4. Reposition edge labels to the corner of the new Z-route. Mermaid
+  //    placed each <g class="edgeLabel"> at the midpoint of its original
+  //    bezier; after re-routing, those positions are stale. Labels appear
+  //    in the same source order as the labeled edges they belong to, so
+  //    we walk parsedEdges and consume one label per labeled edge.
+  const labelGroups = Array.from(
+    svgRoot.querySelectorAll('g.edgeLabels g.edgeLabel, g.edgeLabel')
+  );
+  let labelsMoved = 0;
+  let labelIdx = 0;
+  for (const edge of parsedEdges) {
+    if (!edge.label) continue;
+    if (labelIdx >= labelGroups.length) break;
+    const mid = midByEdge.get(`${edge.source}->${edge.target}`);
+    const g = labelGroups[labelIdx++];
+    if (!mid || !g) continue;
+    writeTranslate(g, mid.midX, mid.midY);
+    labelsMoved++;
+  }
 
-  // 5. Recompute the SVG viewBox so the new positions are visible without
+  // 5. Draw group rectangles, if any. Inserted BEFORE the node container
+  //    so they render behind nodes/edges.
+  const groupsDrawn = drawGroups(svgRoot, layoutGroups, finalPos);
+
+  // 6. Recompute the SVG viewBox so the new positions are visible without
   //    the user having to pan/zoom. We grow the box around all final
   //    positions plus their half-extents, with a small margin.
   expandViewBox(svgRoot, finalPos);
@@ -171,6 +280,8 @@ export function applyLayout(svgRoot, spytialPositions, parsedEdges) {
     edgesRedrawn,
     edgesViaFallback,
     edgesTotal: pathsArr.length,
+    labelsMoved,
+    groupsDrawn,
   };
 }
 
@@ -236,6 +347,91 @@ export function highlightConflicts(svgRoot, conflictAtomIds, conflictPairs, pars
   }
 
   return { nodesHighlighted, edgesHighlighted };
+}
+
+// Draw a rectangle around every spytial LayoutGroup using the post-solver
+// node positions. Inserted into the SVG BEFORE the existing node groups
+// so the rects render behind nodes (no z-index needed — DOM order
+// suffices in SVG). Returns the count drawn.
+//
+// LayoutGroup shape (from spytial-core/src/layout/interfaces.ts):
+//   { name, nodeIds, keyNodeId, showLabel, sourceConstraint?, negated?, overlapping? }
+export function drawGroups(svgRoot, groups, finalPos, opts = {}) {
+  if (!groups || groups.length === 0) return 0;
+
+  const padding = opts.padding ?? 18;
+  const fill = opts.fill ?? 'rgba(120, 160, 220, 0.10)';
+  const stroke = opts.stroke ?? '#7aa';
+  const labelFill = opts.labelFill ?? '#479';
+
+  // Pick a container we can prepend the rectangles to. Mermaid wraps the
+  // graph in <g class="root"> > <g class="nodes">; inserting before the
+  // .nodes group keeps rects behind everything but the SVG background.
+  const nodesContainer = svgRoot.querySelector('g.nodes')
+                     || svgRoot.querySelector('g.root > g')
+                     || svgRoot.querySelector('g');
+  if (!nodesContainer || !nodesContainer.parentNode) return 0;
+  const insertionParent = nodesContainer.parentNode;
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+  // Sort groups largest-first so smaller (nested) groups render in front
+  // of their containers when both are drawn.
+  const sorted = groups.slice().sort((a, b) => (b.nodeIds?.length || 0) - (a.nodeIds?.length || 0));
+
+  let drawn = 0;
+  for (const group of sorted) {
+    if (!group.nodeIds || group.nodeIds.length === 0) continue;
+    if (group.negated) continue; // negated groups represent "no rect should contain these"
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let counted = 0;
+    for (const id of group.nodeIds) {
+      const p = finalPos.get(id);
+      if (!p) continue;
+      if (p.x - p.hx < minX) minX = p.x - p.hx;
+      if (p.y - p.hy < minY) minY = p.y - p.hy;
+      if (p.x + p.hx > maxX) maxX = p.x + p.hx;
+      if (p.y + p.hy > maxY) maxY = p.y + p.hy;
+      counted++;
+    }
+    if (counted === 0 || !Number.isFinite(minX)) continue;
+
+    const x = minX - padding;
+    const y = minY - padding;
+    const w = (maxX - minX) + 2 * padding;
+    const h = (maxY - minY) + 2 * padding;
+
+    const g = document.createElementNS(svgNS, 'g');
+    g.setAttribute('class', 'spytial-group');
+    g.setAttribute('data-group-name', group.name || '');
+
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', x);
+    rect.setAttribute('y', y);
+    rect.setAttribute('width', w);
+    rect.setAttribute('height', h);
+    rect.setAttribute('fill', fill);
+    rect.setAttribute('stroke', stroke);
+    rect.setAttribute('stroke-width', '1.5');
+    rect.setAttribute('rx', '8');
+    rect.setAttribute('ry', '8');
+    g.appendChild(rect);
+
+    if (group.name && group.showLabel !== false) {
+      const text = document.createElementNS(svgNS, 'text');
+      text.setAttribute('x', x + 10);
+      text.setAttribute('y', y + 16);
+      text.setAttribute('font-size', '11');
+      text.setAttribute('font-family', 'system-ui, sans-serif');
+      text.setAttribute('fill', labelFill);
+      text.textContent = group.name;
+      g.appendChild(text);
+    }
+
+    insertionParent.insertBefore(g, nodesContainer);
+    drawn++;
+  }
+  return drawn;
 }
 
 function expandViewBox(svgRoot, finalPos) {

@@ -26,6 +26,7 @@
   <div style="margin: 8px 0;">
     <button id="btn-sat">render satisfiable spec</button>
     <button id="btn-unsat">render unsat spec (over-constrain edges)</button>
+    <button id="btn-groups">render with groups</button>
   </div>
 
   <div class="panel">
@@ -83,6 +84,20 @@ constraints:
 directives: []
 `;
 
+    // Group constraints. Each `group` constraint with a selector
+    // collects atoms in that class into a LayoutGroup; we draw a
+    // rectangle around them in the SVG.
+    const leftSubtreeSpec = `
+constraints:
+  - group: { selector: leftSubtree, name: 'left subtree' }
+directives: []
+`;
+    const rightSubtreeSpec = `
+constraints:
+  - group: { selector: rightSubtree, name: 'right subtree' }
+directives: []
+`;
+
     // ----- source --------------------------------------------------------
     // A small binary tree plus one shared child (D), to exercise tree
     // layout, sharing, and labeled edges. Edge labels `left`/`right`
@@ -136,6 +151,22 @@ graph TD
       await runOnce('unsat', unsatSource);
     }
 
+    async function runGroups() {
+      clearRegistry();
+      registerSpec('tree', treeSpec);
+      registerSpec('root', rootSpec);
+      registerSpec('leftSubtree', leftSubtreeSpec);
+      registerSpec('rightSubtree', rightSubtreeSpec);
+      // B is the left child of A; B's subtree (B, E) gets the leftSubtree
+      // class. C is the right child of A; C's subtree (C, F) gets the
+      // rightSubtree class. D is shared so it lives in neither group.
+      const groupsSource = source.replace(
+        'class A,B,C,D,E,F tree',
+        'class A,B,C,D,E,F tree\n    class B,E leftSubtree\n    class C,F rightSubtree'
+      );
+      await runOnce('groups', groupsSource);
+    }
+
     async function runOnce(mode, sourceOverride) {
       try {
         const src = sourceOverride ?? source;
@@ -174,6 +205,7 @@ graph TD
 
     document.getElementById('btn-sat').addEventListener('click', runSat);
     document.getElementById('btn-unsat').addEventListener('click', runUnsat);
+    document.getElementById('btn-groups').addEventListener('click', runGroups);
 
     async function go() {
       if (window.mermaid?.initialize) {

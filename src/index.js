@@ -132,8 +132,10 @@ export async function render(targetEl, source, opts = {}) {
   const result = await runHeadlessLayout(layoutSpec, instance, { figWidth, figHeight });
   const positions = result.positions.positions;
 
-  // 5. Mutate the mermaid SVG to match.
-  const stats = applyLayout(svgRoot, positions, parsed.edges);
+  // 5. Mutate the mermaid SVG to match. Pass through the LayoutGroups so
+  //    `group` constraints get visual rectangles drawn behind the nodes.
+  const layoutGroups = instanceLayout.groups || [];
+  const stats = applyLayout(svgRoot, positions, parsed.edges, layoutGroups);
 
   // 6. Highlight any unsat constraints back onto the SVG. Edges are
   //    matched against `parsed.edges` so we tint a path whenever both

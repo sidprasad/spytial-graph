@@ -51,6 +51,36 @@ render(targetEl: HTMLElement, source: string, opts?: { extraSpec?: string }): Pr
 clearRegistry(): void
 ```
 
+## Groups
+
+A spytial `group` constraint collects atoms into a `LayoutGroup`. We
+draw each group as a rounded `<rect>` behind the nodes, sized to enclose
+all members plus a padding margin, with the group's name in the
+top-left corner. Inserted before the node container in DOM order so it
+sits behind everything but the SVG background.
+
+```yaml
+# leftSubtreeSpec
+constraints:
+  - group: { selector: leftSubtree, name: 'left subtree' }
+```
+
+```
+# in the mermaid source
+class B,E leftSubtree
+class C,F rightSubtree
+```
+
+For overlapping groups, the larger group is drawn first (deeper in the
+DOM) so smaller groups visually nest in front. Spytial's "negated"
+groups (representing "no clean rect can contain these") are skipped —
+they don't have an unambiguous rectangle to draw.
+
+The `examples/binary-tree.html` demo has a third button, **"render with
+groups"**, that adds `leftSubtree` and `rightSubtree` classes to the
+relevant nodes and registers two group constraints. The result panel's
+`groupsDrawn` stat reflects how many rects were inserted.
+
 ## Unsat highlighting
 
 When the constraint system is over-determined, spytial-core reports
@@ -109,12 +139,25 @@ spelling, two relations will be emitted with the same name — one unary
 (class membership), one binary (label). spytial will likely complain.
 Name your classes and labels distinctly.
 
-## Known limitations (v1)
+## Edge routing
 
-- **Straight-line edges.** When spytial moves nodes, edges are redrawn as
-  straight lines between new node centers (clipped to node AABBs).
-  Mermaid's pretty curved routing is lost on any moved edge. Recomputing
-  curves would require re-running an edge routing algorithm; that's v2.
+Mermaid's original bezier paths are stale once spytial moves the nodes,
+so we redraw every edge with **orthogonal Z-routing**: exit the source
+perpendicular to its closest face, run along the dominant axis, bend
+once toward the target's closest face, enter perpendicular to that.
+Corners are smoothed with a small quadratic curve so edges look like
+flowchart paths, not hand-drawn L-shapes. Edge labels are repositioned
+to the midpoint of the new route in the same pass.
+
+This is *obstacle-unaware* — an edge can still cut through a third
+node if spytial's layout puts one in its path. Obstacle-aware routing
+(orthogonal with detour, or A* over a visibility graph) is a v2
+upgrade.
+
+## Known limitations
+
+- **Obstacle-unaware routing.** See above — edges may pass through
+  unrelated nodes.
 - **Flowchart only.** `graph TD`/`graph LR`/`flowchart TD` etc. No
   classDiagram, stateDiagram, sequenceDiagram, Gantt, pie, journey.
 - **Mermaid `classDef fill:#...` styles** still apply (mermaid renders the
