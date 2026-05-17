@@ -1,0 +1,19 @@
+{
+  "name": "spytial-mermaid",
+  "version": "0.1.0-prototype",
+  "description": "Apply SpyTial spatial constraints on top of mermaid.js flowcharts via class-keyed spec registry.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "mermaid": ">=10",
+    "spytial-core": ">=2.5"
+  },
+  "license": "MIT"
+}

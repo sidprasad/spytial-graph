@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>spytial-mermaid · binary-tree demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; background: #fafafa; }
+    h1 { font-size: 18px; margin: 0 0 8px 0; }
+    h2 { font-size: 14px; margin: 16px 0 6px 0; color: #444; }
+    .panel { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .col { background: white; border: 1px solid #ddd; border-radius: 6px; padding: 12px; }
+    pre { font-size: 12px; background: #f4f4f4; padding: 8px; border-radius: 4px; overflow-x: auto; }
+    .stats { font-size: 12px; color: #555; }
+    .status { font-weight: bold; }
+    .status.ok { color: #2a7; }
+    .status.err { color: #c33; }
+    .render-box { min-height: 360px; }
+  </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/spytial-core@2.5.2/dist/browser/spytial-core-complete.global.js"></script>
+</head>
+<body>
+  <h1>spytial-mermaid prototype — binary-tree</h1>
+  <div class="stats" id="status">initializing…</div>
+  <div style="margin: 8px 0;">
+    <button id="btn-sat">render satisfiable spec</button>
+    <button id="btn-unsat">render unsat spec (over-constrain edges)</button>
+  </div>
+
+  <div class="panel">
+    <div class="col">
+      <h2>mermaid source</h2>
+      <pre id="source"></pre>
+      <h2>registered specs</h2>
+      <pre id="specs"></pre>
+    </div>
+    <div class="col">
+      <h2>rendered (mermaid + spytial post-nudge)</h2>
+      <div id="out" class="render-box"></div>
+      <h2>pipeline result</h2>
+      <pre id="result" style="max-height: 240px;"></pre>
+    </div>
+  </div>
+
+  <script type="module">
+    import { registerSpec, clearRegistry, render } from '../src/index.js';
+
+    // ----- specs ---------------------------------------------------------
+    // `tree` class contributes the BELOW constraint (children below parent).
+    // The example also uses *edge labels* in the mermaid source — every
+    // labeled edge becomes a named binary relation users can target
+    // directly, so we add orientation constraints that pull `left` edges
+    // leftward and `right` edges rightward. This is the natural way to
+    // express binary-tree shape via mermaid+spytial.
+    //
+    // Note on Shape B: spytial *directives* (atomColor, icon, edgeColor)
+    // do not take effect — mermaid renders the SVG and we only post-nudge
+    // POSITIONS. Only *constraints* are visible. The directive in
+    // rootSpec is included to show that the merged YAML still carries it,
+    // even though it has no visual effect.
+    const treeSpec = `
+constraints:
+  - orientation: { selector: tree_edge, directions: [below] }
+  - orientation: { selector: left,  directions: [leftOf] }
+  - orientation: { selector: right, directions: [rightOf] }
+directives: []
+`;
+
+    const rootSpec = `
+constraints:
+  - align: { selector: root_edge, direction: horizontal }
+directives:
+  - atomColor: { selector: root, value: "#fec" }
+`;
+
+    // Pathological spec that contradicts `tree`: forces edges to point
+    // ABOVE while tree forces them BELOW. Spytial will flag the conflict
+    // and we'll tint the offending nodes/edges red in the SVG.
+    const unsatSpec = `
+constraints:
+  - orientation: { selector: tree_edge, directions: [above] }
+directives: []
+`;
+
+    // ----- source --------------------------------------------------------
+    // A small binary tree plus one shared child (D), to exercise tree
+    // layout, sharing, and labeled edges. Edge labels `left`/`right`
+    // get exposed as named binary relations the spec can target.
+    //
+    // Mermaid v10 only accepts ONE `:::class` per node; multi-class
+    // composition (Verification step 4) goes through the `class` directive
+    // instead, which both mermaid and our parser handle.
+    const source = `
+graph TD
+    A -->|left| B
+    A -->|right| C
+    B -->|left| E
+    B -->|right| D
+    C -->|left| D
+    C -->|right| F
+    class A,B,C,D,E,F tree
+    class A root
+`;
+
+    document.getElementById('source').textContent = source.trim();
+    document.getElementById('specs').textContent =
+      '// tree\n' + treeSpec.trim() + '\n\n// root\n' + rootSpec.trim();
+
+    // ----- run -----------------------------------------------------------
+    const statusEl = document.getElementById('status');
+    const setStatus = (msg, ok) => {
+      statusEl.textContent = msg;
+      statusEl.className = 'status ' + (ok ? 'ok' : 'err');
+    };
+
+    async function runSat() {
+      clearRegistry();
+      registerSpec('tree', treeSpec);
+      registerSpec('root', rootSpec);
+      await runOnce('satisfiable');
+    }
+
+    async function runUnsat() {
+      clearRegistry();
+      registerSpec('tree', treeSpec);
+      registerSpec('root', rootSpec);
+      // `tree` already says edges go BELOW; pile on a contradictory rule
+      // via class `pathological` so the merged spec contains both.
+      registerSpec('pathological', unsatSpec);
+      // Add the class to the source so the merge picks up the spec.
+      const unsatSource = source.replace(
+        'class A,B,C,D,E,F tree',
+        'class A,B,C,D,E,F tree\n    class A,B,C,D,E,F pathological'
+      );
+      await runOnce('unsat', unsatSource);
+    }
+
+    async function runOnce(mode, sourceOverride) {
+      try {
+        const src = sourceOverride ?? source;
+        const result = await render(document.getElementById('out'), src);
+        if (!result) {
+          setStatus('render returned null — nothing parsed', false);
+          return;
+        }
+        if (!result.applied) {
+          setStatus('no specs applied: ' + result.reason, false);
+          return;
+        }
+        const s = result.stats;
+        const c = result.conflicts;
+        const conflictMsg = c.count > 0
+          ? ` · ${c.count} unsat constraint${c.count === 1 ? '' : 's'}, highlighted ${c.highlight.nodesHighlighted} node(s)/${c.highlight.edgesHighlighted} edge(s)`
+          : '';
+        setStatus(
+          `[${mode}] moved ${s.nodesMoved}/${s.nodesTotal} nodes, redrew ${s.edgesRedrawn}/${s.edgesTotal} edges` + conflictMsg,
+          true
+        );
+        document.getElementById('result').textContent = JSON.stringify({
+          mode,
+          stats: result.stats,
+          conflicts: result.conflicts,
+          dataAtoms: result.dataJson.atoms.length,
+          dataRelations: result.dataJson.relations.map(r => r.name + '(' + r.tuples.length + ')'),
+          firstPositions: result.positions.slice(0, 5),
+        }, null, 2);
+      } catch (err) {
+        console.error(err);
+        setStatus('ERROR: ' + err.message, false);
+        document.getElementById('result').textContent = err.stack || String(err);
+      }
+    }
+
+    document.getElementById('btn-sat').addEventListener('click', runSat);
+    document.getElementById('btn-unsat').addEventListener('click', runUnsat);
+
+    async function go() {
+      if (window.mermaid?.initialize) {
+        window.mermaid.initialize({ startOnLoad: false, securityLevel: 'loose' });
+      }
+      await new Promise(r => setTimeout(r, 50));
+      await runSat();
+    }
+
+    go();
+  </script>
+</body>
+</html>
