@@ -9,7 +9,7 @@ SpyTial renders it as a **live, draggable constraint diagram**. Drop a fenced
 ` ```spytial-graph ` block into Markdown and it comes alive client-side, the way
 ` ```mermaid ` does.
 
-```
+```spytial-graph
 A -> B : left
 A -> C : right
 
@@ -19,7 +19,11 @@ A -> C : right
 ```
 
 You get a faithful default layout for free; the `@annotations` refine it — orientation,
-alignment, grouping, cycles — without rebuilding anything.
+alignment, grouping, cycles — without rebuilding anything. That block is tagged
+` ```spytial-graph `, so in any markdown pipeline it renders as a *live* diagram — this
+README is dogfood. See it rendered live at `/examples/md-viewer.html?doc=../README.md`, or
+read the intro post, [Your diagram doesn't know what it's
+drawing](examples/your-diagram-doesnt-know.md).
 > **New here? Start with [GUIDE.md](GUIDE.md)** 
 
 ## Try it
@@ -33,6 +37,8 @@ npm run serve   # zero-dep static server, port 8100
 # /examples/binary-tree.html   programmatic API demo
 # /examples/editable.html      editable graph — edit visually, re-get the notation
 # /examples/diagrams-that-edit-back.html   "explorable" post built on the editor
+# /examples/your-diagram-doesnt-know.html  intro post, self-contained (CDN engine)
+# /examples/md-viewer.html?doc=<file.md>   render any spytial-graph .md live (incl. this README)
 ```
 
 (Any static server works; one is needed only because the pages load ES modules.)
