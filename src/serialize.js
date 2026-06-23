@@ -9,14 +9,14 @@
 // equivalent graph.
 //
 // The mapping mirrors relationalize.js exactly:
-//   atom                       → a node; `type !== 'Node'` ⇒ [Type],
-//                                `label !== id` ⇒ label="…", labels.classes ⇒ :::c1:::c2
+//   atom                       → a node; `label !== id` ⇒ [label] (mermaid-style),
+//                                `type !== 'Node'` ⇒ :::sort
 //   `_` relation               → unlabeled edges            (A -> B)
 //   named binary relation      → labeled edges              (A -> B : name)
 //   `_links` relation          → skipped (selector-only; duplicates the drawn
 //                                edges, so emitting it would double every edge)
-//   unary (class) relation     → skipped (class membership is recovered from
-//                                each atom's labels.classes instead)
+//   unary (class) relation     → a `class …` line (inline ::: now denotes the
+//                                sort, so cross-cutting groups use the keyword form)
 //
 // Output is canonical and stable so it's diff-friendly and idempotent: nodes and
 // edges keep their first-seen order, a node's type/classes are emitted inline at
@@ -43,41 +43,28 @@ function arityOf(rel) {
   return 0;
 }
 
-// Quote a label for `label="…"`. Embedded double quotes are rare; fall back to
-// single quotes so the round-trip still parses.
-function quoteLabel(s) {
+// Emit a node's display label inside `[...]`. Bare is fine for ordinary text;
+// quote only when the label holds bracket/quote chars that would confuse parsing.
+function bracketLabel(s) {
   const str = String(s);
+  if (/^[^[\](){}<>"']+$/.test(str)) return str;
   if (!str.includes('"')) return `"${str}"`;
   if (!str.includes("'")) return `'${str}'`;
   return `"${str.replace(/"/g, '')}"`;
 }
 
-// The `[...]` bracket parts for a node: its non-default type, then an explicit
-// label when it differs from the id (the id is the implicit label).
-function bracketParts(atom) {
-  const parts = [];
-  if (atom.type && atom.type !== DEFAULT_TYPE) parts.push(atom.type);
-  if (atom.label != null && atom.label !== atom.id) parts.push(`label=${quoteLabel(atom.label)}`);
-  return parts;
-}
-
-// The `[Type, label="…"]:::class` suffix for a node, or '' if it's a plain
-// default node whose id is also its label.
+// The `[label]:::sort` suffix for a node, or '' if its id is also its label and
+// it has the default sort. Classes aren't inline — they become `class …` lines.
 function decorate(atom) {
   let s = '';
-  const parts = bracketParts(atom);
-  if (parts.length) s += `[${parts.join(', ')}]`;
-  const classes = atom.labels && atom.labels.classes;
-  if (Array.isArray(classes)) {
-    for (const c of classes) s += `:::${c}`;
-  }
+  if (atom.label != null && atom.label !== atom.id) s += `[${bracketLabel(atom.label)}]`;
+  if (atom.type && atom.type !== DEFAULT_TYPE) s += `:::${atom.type}`;
   return s;
 }
 
 function hasDecoration(atom) {
-  if (bracketParts(atom).length > 0) return true;
-  const classes = atom.labels && atom.labels.classes;
-  return Array.isArray(classes) && classes.length > 0;
+  return (atom.label != null && atom.label !== atom.id) ||
+    (!!atom.type && atom.type !== DEFAULT_TYPE);
 }
 
 // Serialize a graph data model to spytial-graph notation.
@@ -121,7 +108,7 @@ export function serializeToSpytialGraph(input, opts = {}) {
   const lines = [];
   const declared = new Set();
 
-  // Render an edge endpoint, emitting its [Type]:::class inline the first time
+  // Render an edge endpoint, emitting its [label]:::sort inline the first time
   // the node is seen (so each node is decorated exactly once).
   const endpoint = (id) => {
     const atom = atomById.get(id);
@@ -149,6 +136,27 @@ export function serializeToSpytialGraph(input, opts = {}) {
     if (!declared.has(a.id)) {
       lines.push(a.id + decorate(a));
     }
+  }
+
+  // Cross-cutting groups round-trip as `class …` lines (inline ::: now denotes
+  // the sort), emitted after the node/edge lines so every referenced node has
+  // already been introduced. Class membership is a set, and the atom order it
+  // would otherwise follow isn't stable across a round-trip (serialize regroups
+  // edges, so re-parse sees nodes in a different order) — so sort lines and
+  // members canonically to stay idempotent.
+  const classMembers = new Map();
+  for (const a of atoms) {
+    const cs = a.labels && a.labels.classes;
+    if (Array.isArray(cs)) {
+      for (const c of cs) {
+        if (!classMembers.has(c)) classMembers.set(c, []);
+        classMembers.get(c).push(a.id);
+      }
+    }
+  }
+  for (const name of [...classMembers.keys()].sort()) {
+    const ids = classMembers.get(name).slice().sort();
+    lines.push(`class ${ids.join(',')} ${name}`);
   }
 
   let out = lines.join('\n');

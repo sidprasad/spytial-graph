@@ -41,11 +41,11 @@ npm run serve   # zero-dep static server, port 8100
 
 - **Edges** — `A -> B`, or labeled `A -> B : left` (the label becomes a selector).
 - **Nodes** are implicit from edges; the id is the name, and every node is a rectangle.
-  A bracket gives the node a **type**: `A[Person]` makes `selector: Person` match it.
-- **Labels** — the id is the display label by default; set a different one with
-  `A[label="Alice"]` (or `A[Person, label="Alice"]` alongside a type). The id stays the
-  stable identity that edges reference — handy for generated/short ids.
-- **Classes** — `A:::tag` (chainable), or `class A,B,C tag` for several at once.
+- **Labels** — `A[Alice]` gives a display label, mermaid-style; without one the id is
+  shown. The id stays the stable identity that edges reference (handy for generated ids).
+- **Sorts** — `A:::Person` gives the node a type, so `selector: Person` matches it. One
+  sort for now; a chain `A:::Person:::Employee` (a linear hierarchy) is reserved for later.
+- **Classes** — `class A,B,C tag` tags several nodes with a cross-cutting group.
 - **No header, no direction.** Layout comes from the annotations, not a `TD`/`LR` keyword.
 
 Mermaid arrows (`-->`, `-.->`, `==>`, `---`), pipe labels (`A -->|left| B`), and a leading
@@ -75,7 +75,7 @@ and the node sets round it out:
 | `<label>` | edges carrying that label — `A -> B : left` → `left` |
 | `_` | the unlabeled edges |
 | `_links` | every edge |
-| `<type>` | nodes of that type — `A[Person]` → `Person` (untyped nodes are `Node`) |
+| `<type>` | nodes of that sort — `A:::Person` → `Person` (plain nodes are `Node`) |
 | `<class>` | nodes carrying that class — `class A,B team` → `team` |
 
 Each edge is **drawn once** (under its label, or `_`). `_links` and the node-set relations

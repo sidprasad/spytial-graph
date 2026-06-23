@@ -14,23 +14,22 @@
 //   A -> B : left        a labeled edge (the label becomes a selector)
 // Nodes (a node is implicit from any edge; the id is its name):
 //   A                    bare id (the id is also the display label)
-//   A[Person]            a typed node — `Person` is the node's type, so
-//                        `selector: Person` matches every Person node. All nodes
-//                        render as rectangles; the bracket is a type, not a shape.
-//   A[label="Alice"]     a display label distinct from the id (mermaid-style;
-//                        without one, the id is the label)
-//   A[Person, label="Alice"]   a type and a label together
-//   A:::tag              class tag (chainable: A:::x:::y)
-//   class A,B,C tag      assign a class to several nodes
+//   A[Alice]             a display label, mermaid-style — the id stays the identity
+//                        that edges reference; without a label the id is shown.
+//   A:::Person           the node's sort/type, so `selector: Person` matches it.
+//                        One sort for now; a chain `A:::Person:::Employee` is
+//                        reserved for a linear sort hierarchy (the leaf is the sort).
+//   A[Alice]:::Person    a label and a sort together
+//   class A,B,C tag      tag several nodes with a cross-cutting class
 // Comments:  %% rest-of-line
 //
 // For paste-compatibility, a leading `graph`/`flowchart` line, the mermaid-style
 // arrows (-->, -.->, ==>, ---), and pipe labels (A -->|x| B) are also accepted;
-// the other mermaid bracket forms are read as a type too (inner text).
+// the other mermaid bracket forms are read as a label too (inner text).
 
-// Any bracket wrapper after an id holds the node's type, e.g. `A[Person]`. The
-// extra forms ((x)), {x}, [[x]], [(x)], >x] are tolerated for pasting.
-const TYPE_BRACKET = /^[[({>]+(.+?)[\])}]+$/;
+// A bracket wrapper after an id holds the node's display label, e.g. `A[Alice]`
+// (mermaid-style). The forms ((x)), {x}, [[x]], [(x)], >x] are tolerated too.
+const LABEL_BRACKET = /^[[({>]+(.+?)[\])}]+$/;
 
 // Ordered longest-first so a longer arrow matches before one of its substrings
 // (e.g. `-->` before `->`, which it contains as a tail).
@@ -51,31 +50,12 @@ function unquote(s) {
   return t;
 }
 
-// Parse a node bracket's inner text into { type, label }. The bracket holds the
-// node's type (a bareword, as before) and/or an explicit `label="…"`:
-//   [Person]                 → type Person
-//   [label="Alice"]          → label Alice
-//   [Person, label="Alice"]  → both
-// Without a label the id is used as the label (handled downstream).
-function parseBracketInner(inner) {
-  let label = null;
-  let rest = inner;
-  // Pull out `label=…` (quoted or bareword up to the next comma) anywhere inside.
-  const lm = inner.match(/(^|,)\s*label\s*=\s*("[^"]*"|'[^']*'|[^,]*)/i);
-  if (lm) {
-    label = unquote(lm[2]);
-    rest = inner.slice(0, lm.index) + inner.slice(lm.index + lm[0].length);
-  }
-  // Whatever remains (commas removed) is the type bareword.
-  const type = unquote(rest.replace(/,/g, ' ').trim());
-  return { type: type || null, label: label !== '' ? label : null };
-}
-
 function parseNodeExpr(raw) {
-  // Pull off chained `:::class` tags first so they don't confuse type parsing.
-  const classes = [];
-  const expr = raw.trim().replace(/:::([\w-]+)/g, (_, c) => {
-    classes.push(c);
+  // Pull off the `:::Sort` chain first. One sort for now — the most specific
+  // (last) segment; earlier segments are reserved for a linear sort hierarchy.
+  const sorts = [];
+  const expr = raw.trim().replace(/:::([\w-]+)/g, (_, s) => {
+    sorts.push(s);
     return '';
   }).trim();
 
@@ -85,14 +65,15 @@ function parseNodeExpr(raw) {
   const id = m[1];
   const rest = m[2].trim();
 
-  // An optional [Type] / [label="…"] annotation after the id.
-  let type = null;
+  // A [bracket] holds the display label (mermaid-style), not the type.
   let label = null;
   if (rest) {
-    const tm = rest.match(TYPE_BRACKET);
-    if (tm) ({ type, label } = parseBracketInner(tm[1]));
+    const bm = rest.match(LABEL_BRACKET);
+    if (bm) label = unquote(bm[1].trim()) || null;
   }
-  return { id, type, label, classes };
+
+  const type = sorts.length ? sorts[sorts.length - 1] : null;
+  return { id, type, label };
 }
 
 function findArrow(line) {
@@ -151,12 +132,11 @@ export function parseGraph(source) {
     if (!nodes.has(n.id)) {
       nodes.set(n.id, { id: n.id, type: n.type, label: n.label });
     } else {
-      // Prefer an explicit [Type] / label="…" when it appears on any mention.
+      // Prefer an explicit sort / label when it appears on any mention.
       const existing = nodes.get(n.id);
       if (n.type != null) existing.type = n.type;
       if (n.label != null) existing.label = n.label;
     }
-    for (const c of n.classes) addClass(n.id, c);
   };
 
   for (const line of lines) {
@@ -187,7 +167,7 @@ export function parseGraph(source) {
       continue;
     }
 
-    // Standalone node declaration (e.g. `A[Label]:::root;`)
+    // Standalone node declaration (e.g. `A[Alice]:::Person;`)
     const stripped = line.replace(/;$/, '').trim();
     const node = parseNodeExpr(stripped);
     if (node) addNode(node);

@@ -133,7 +133,7 @@ l -> lr : right
         Because the diagram is reified, your code can read it. <code>getValue()</code> hands you
         the atoms and relations as plain JSON; <code>getSource()</code> hands back the notation.
         Same object, two views — edit the graph and both update live. A node's <em>id</em> is its
-        stable identity (what edges reference); give it a friendlier <code>label="…"</code> for
+        stable identity (what edges reference); give it a friendlier <code>[label]</code> for
         display, the way these people have names but the edges still wire up by id.
       </p>
     </div>
@@ -150,8 +150,8 @@ l -> lr : right
       </div>
       <figcaption>Two faithful views of one object. <b>Rename or add someone</b> — the notation and the JSON move together.</figcaption>
       <script type="text/spytial">
-a[label="Alice"] -> b[label="Bob"]   : knows
-b -> c[label="Carol"] : knows
+a[Alice] -> b[Bob]   : knows
+b -> c[Carol] : knows
 a -> c : knows
       </script>
     </figure>

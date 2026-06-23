@@ -50,29 +50,29 @@ A -> B : yes
 A -> C : no
 ```
 
-A node's id is its name. All nodes are rectangles. A bracket gives the node a
-**type** — `selector: Person` then matches every node of that type:
+A node's id is its name. A `[bracket]` gives it a display label, mermaid-style —
+without one the id is shown:
 
 ```spytial-graph
-Alice[Person]  -> Acme[Company]
-Bob[Person]    -> Acme
+u1[Alice] -> u2[Bob]
+```
+
+A `:::Sort` tag gives the node a **type**, so `selector: Person` then matches
+every node of that type:
+
+```spytial-graph
+alice[Alice]:::Person -> acme[Acme]:::Company
+bob[Bob]:::Person     -> acme
 
 @atomColor(selector=Person, value='#cfe8d8')
 ```
 
-By default a node's **id is its label**. Give it a different display label with
-`label="…"` — handy when the id is short or generated:
+The id stays the identity that edges reference; the label is just what's drawn,
+and the sort is what selectors match. One sort per node for now — a chain
+`:::Person:::Employee` (a linear hierarchy) is reserved for later.
 
-```spytial-graph
-u1[label="Alice"] -> u2[label="Bob"]
-```
-
-Combine it with a type as `u1[Person, label="Alice"]`. The id is still what edges
-reference and what selectors and classes match.
-
-Nodes can also be tagged with a class — `A:::tag`, or `class A,B tag` for several
-at once. There is no header and no `TD`/`LR` direction; layout comes from the
-annotations, not a keyword.
+For a cross-cutting group, tag nodes with `class A,B tag`. There is no header and
+no `TD`/`LR` direction; layout comes from the annotations, not a keyword.
 
 ## Spatial operations
 

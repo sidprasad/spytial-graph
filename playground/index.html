@@ -197,7 +197,7 @@
                 then add spatial operations inline as <code>@annotations</code> — e.g.
                 <code>@orientation(selector=_links, directions=[below])</code>. Selectors are
                 edge labels (<code>_</code> = unlabeled, <code>_links</code> = all), node
-                types (<code>A[Person]</code> → <code>Person</code>), and classes.
+                sorts (<code>A:::Person</code> → <code>Person</code>), and classes.
             </div>
             <div class="editor-stack">
                 <div class="editor-panel" id="panel-diagram">
@@ -254,7 +254,7 @@
         //   <label>  — edges with that label, e.g. left / right (drawn)
         //   _        — unlabeled edges (drawn)
         //   _links   — every edge
-        //   <type>   — nodes of that type, e.g. A[Person] → Person
+        //   <type>   — nodes of that sort, e.g. A:::Person → Person
         //   <class>  — nodes carrying a class
         const EXAMPLES = {
             flowchart: `Start -> Build

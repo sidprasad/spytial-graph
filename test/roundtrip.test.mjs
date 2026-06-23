@@ -38,18 +38,17 @@ function roundTrip(text) {
 const cases = {
   'unlabeled edges': `A -> B\nB -> C`,
   'labeled edges': `A -> B : left\nA -> C : right`,
-  'typed nodes': `A[Person] -> B[Place]\nB -> C`,
-  'classed inline': `A:::vip -> B\nB:::vip -> C`,
+  'sorted nodes': `A:::Person -> B:::Place\nB -> C`,
   'classed via class line': `A -> B\nB -> C\nclass A,B team`,
-  'typed + classed': `A[Person]:::vip -> B\nB -> C[Widget]`,
-  'isolated nodes': `A -> B\nLonely\nTagged:::special\nTyped[Gadget]`,
+  'sort + class': `A:::Person -> B\nB -> C:::Widget\nclass A vip`,
+  'isolated nodes': `A -> B\nLonely\nTagged\nclass Tagged special\nTyped:::Gadget`,
   'multi-label same pair': `A -> B : left\nA -> B : right`,
   'empty graph': ``,
-  'label only': `A[label="Alice"] -> B`,
-  'type + label': `A[Person, label="Alice"] -> B[Place, label="Acme"]`,
-  'label with spaces': `A[label="Alice Smith"] -> B[label="Bob Jones"]`,
-  'isolated labeled node': `A -> B\nLone[label="Solo"]`,
-  'mixed everything': `A[Person, label="Alice"]:::vip -> B : left\nA -> C : right\nB -> D\nclass C,D team\nIsl[Thing]`,
+  'label only': `A[Alice] -> B`,
+  'sort + label': `A[Alice]:::Person -> B[Acme]:::Place`,
+  'label with spaces': `A[Alice Smith] -> B[Bob Jones]`,
+  'isolated labeled node': `A -> B\nLone[Solo]`,
+  'mixed everything': `A[Alice]:::Person -> B : left\nA -> C : right\nB -> D\nclass A,B vip\nclass C,D team\nIsl:::Thing`,
 };
 
 for (const [name, text] of Object.entries(cases)) {
@@ -72,10 +71,11 @@ for (const [name, text] of Object.entries(cases)) {
 // reify()-shaped input (atoms/relations/types, including `_links` + unary class
 // relations) must skip the selector-only relations.
 {
-  const { atoms, relations } = relationalize(parseGraph(`A:::vip -> B : left\nA -> C`));
+  const src = `A -> B : left\nA -> C\nclass A team`;
+  const { atoms, relations } = relationalize(parseGraph(src));
   const out = serializeToSpytialGraph({ atoms, relations, types: [] });
   check('reify-shaped input skips _links/unary',
-    fingerprint(out) === fingerprint(`A:::vip -> B : left\nA -> C`), `\n${out}`);
+    fingerprint(out) === fingerprint(src), `\n${out}`);
   check('no _links leaked into output', !out.includes('_links'), `\n${out}`);
 }
 
@@ -93,13 +93,16 @@ for (const [name, text] of Object.entries(cases)) {
     ],
   };
   const out = serializeToSpytialGraph(data);
-  check('id≠label emits label="…"',
-    /Person1\[Person, label="Alice"\]/.test(out) && /Person2\[Person, label="Bob"\]/.test(out), `\n${out}`);
+  check('id≠label emits [label]:::sort',
+    /Person1\[Alice\]:::Person/.test(out) && /Person2\[Bob\]:::Person/.test(out), `\n${out}`);
   const g = parseGraph(out);
-  check('re-parsed labels survive',
-    g.nodes.get('Person1').label === 'Alice' && g.nodes.get('Person2').label === 'Bob', `\n${out}`);
-  check('id==label stays bare (no spurious label=)',
+  check('re-parsed label + sort survive',
+    g.nodes.get('Person1').label === 'Alice' && g.nodes.get('Person1').type === 'Person' &&
+    g.nodes.get('Person2').label === 'Bob', `\n${out}`);
+  check('id==label, default sort stays bare',
     serializeToSpytialGraph({ atoms: [{ id: 'A', type: 'Node', label: 'A' }], relations: [] }) === 'A');
+  check('sort-only emits :::sort',
+    serializeToSpytialGraph({ atoms: [{ id: 'A', type: 'Person', label: 'A' }], relations: [] }) === 'A:::Person');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
