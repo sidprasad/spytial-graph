@@ -13,9 +13,10 @@
 //     - <class>  — the nodes carrying a class  (`class A,B team` → `team`),
 //                  for node annotations like @group / @atomColor
 //
-// Atom type = the node's shape (rect, circle, diamond, …) or 'Node' for a plain
-// `A`, so `selector: diamond` targets all decision nodes. Class names are stored
-// on each atom under `labels.classes`.
+// Atom type = the node's [Type] annotation (`A[Person]` → 'Person') or 'Node'
+// for a plain `A`, so `selector: Person` targets every Person node. The node's
+// id is its display name. Class names are stored on each atom under
+// `labels.classes`.
 
 const DEFAULT_TYPE = 'Node';
 
@@ -27,8 +28,7 @@ export const DEFAULT_RELATION = '_';
 export const ALL_EDGES_RELATION = '_links';
 
 function nodeType(node) {
-  if (!node) return DEFAULT_TYPE;
-  return node.shape && node.shape !== 'default' ? node.shape : DEFAULT_TYPE;
+  return node && node.type ? node.type : DEFAULT_TYPE;
 }
 
 export function relationalize({ nodes, edges, classesPerNode }) {
@@ -37,7 +37,7 @@ export function relationalize({ nodes, edges, classesPerNode }) {
     const atom = {
       id,
       type: nodeType(node),
-      label: node.label ?? id,
+      label: id,
     };
     const classes = classesPerNode.get(id);
     if (classes && classes.size > 0) {

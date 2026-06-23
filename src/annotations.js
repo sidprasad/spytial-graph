@@ -136,7 +136,7 @@ function parseArgs(argStr) {
 // ── YAML emission ───────────────────────────────────────────────────────────
 // Emit values back as compact flow-style YAML. Strings that contain
 // YAML-significant characters are single-quoted (with '' escaping) so selectors
-// like '{x: rect | x}' and names like 'left subtree' survive the round-trip.
+// like '{x: Person | x}' and names like 'left subtree' survive the round-trip.
 const YAML_NEEDS_QUOTE = /[\s:{}\[\],&*#?|<>=!%@`'"]/;
 
 function emitScalar(v) {

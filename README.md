@@ -41,8 +41,8 @@ npm run serve   # zero-dep static server (node), port 8100
 ## The notation
 
 - **Edges:** `A -> B`; labeled `A -> B : left` (the label becomes a selector).
-- **Nodes** are implicit from edges. Declare one to give it a label/shape: `A[Start]`,
-  `A(Round)`, `A((Circle))`, `A{Decide}`, `A[[Sub]]`, `A[(Store)]`.
+- **Nodes** are implicit from edges; the id is the name, and every node is a rectangle.
+  A bracket gives the node a **type** — `A[Person]` makes `selector: Person` match it.
 - **Classes:** `A:::tag` (chainable) or `class A,B,C tag`.
 - **No header, no direction** — layout comes from the annotations, not a `TD`/`LR` keyword.
 
@@ -59,7 +59,7 @@ Spatial operations, inline, one per line — `@name(arg=value, …)`:
 | **directives** (styling) | `atomColor`, `size`, `icon`, `edgeColor`, `attribute`, `hideField`, `hideAtom`, `inferredEdge`, `tag`, `flag`, `projection` |
 
 Values are barewords (`below`), quoted strings (`'left subtree'`, or a comprehension
-selector `'{x: rect | …}'`), numbers, or lists (`[below, left]`). A `%%@name(...)` form is
+selector `'{x: Person | …}'`), numbers, or lists (`[below, left]`). A `%%@name(...)` form is
 also accepted, so a block stays valid if pasted into a vanilla Mermaid renderer. Unknown
 names and malformed arguments come back on the result as `annotationErrors`. See
 [GUIDE.md](GUIDE.md) for worked examples.
@@ -146,8 +146,8 @@ edge relations (`_`, `_links`), and a class names a set of nodes:
 | `<label>` | edges carrying that label — `A -> B : left` → `left` |
 | `_` | the unlabeled edges — `A -> B` |
 | `_links` | every edge |
+| `<type>` | nodes of that type — `A[Person]` → `Person` (untyped nodes are `Node`) |
 | `<class>` | the nodes carrying a class — `class A,B team` → `team` |
-| `<shape>` | nodes of that shape — `rect`, `circle`, `diamond`, … (plain nodes are `Node`) |
 
 Each edge is **drawn once** — under its label, or `_` if unlabeled. `_links` and the class
 relations are *selector-only*: `relationalize` lists them in `hiddenRelations` and `index.js`
@@ -181,7 +181,7 @@ deploy, vendor the assets locally.
 
 ## Limitations
 
-- **A small notation** — nodes, edges, labels, the shapes and classes in `parse.js`. No
+- **A small notation** — nodes, edges, labels, types, and classes (see `parse.js`). No
   sequence/state/Gantt/pie diagrams.
 - **Edge labels are relations**, not free text — see the collision warning above.
 - **No automatic live re-render** on source change — call `renderSpytialGraph` again (the

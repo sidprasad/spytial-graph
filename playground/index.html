@@ -173,12 +173,12 @@
                 then add spatial operations inline as <code>@annotations</code> — e.g.
                 <code>@orientation(selector=_links, directions=[below])</code>. Selectors are
                 edge labels (<code>_</code> = unlabeled, <code>_links</code> = all), node
-                classes (<code>tree</code>), and shapes (<code>rect</code>, <code>diamond</code>…).
+                types (<code>A[Person]</code> → <code>Person</code>), and classes.
             </div>
             <div class="editor-stack">
                 <div class="editor-panel" id="panel-diagram">
                     <textarea id="mermaid-input" class="code" spellcheck="false"
-                        placeholder="A[Start] -> B[Build]&#10;B -> C{OK?}&#10;&#10;@orientation(selector=_links, directions=[below])"></textarea>
+                        placeholder="Start -> Build&#10;Build -> Test&#10;&#10;@orientation(selector=_links, directions=[below])"></textarea>
                 </div>
             </div>
             <div class="editor-foot">
@@ -222,20 +222,21 @@
         //   <label>  — edges with that label, e.g. left / right (drawn)
         //   _        — unlabeled edges (drawn)
         //   _links   — every edge
-        //   <class>  — the nodes carrying a class, e.g. tree / root
+        //   <type>   — nodes of that type, e.g. A[Person] → Person
+        //   <class>  — nodes carrying a class
         const EXAMPLES = {
-            flowchart: `A[Start] -> B[Build]
-B -> C{Tests pass?}
-C -> D[(Release)] : ship
-C -> B : retry
+            flowchart: `Start -> Build
+Build -> Test
+Test -> Release : ship
+Test -> Build : retry
 
 %% No annotations yet — SpyTial places nodes freely. Add a spatial operation to
 %% constrain the space — try @orientation(selector=_links, directions=[below])
 %% to point every edge downward. See the "Binary tree" example for more.`,
 
-            pipeline: `A[Start] -> B[Build]
-B -> C[Test]
-C -> D[Ship]
+            pipeline: `Start -> Build
+Build -> Test
+Test -> Ship
 
 %% Every edge's target sits to the right of its source,
 %% so the pipeline reads left -> right.

@@ -50,17 +50,19 @@ A -> B : yes
 A -> C : no
 ```
 
-Nodes take an optional label, shape, and class:
+A node's id is its name. All nodes are rectangles. A bracket gives the node a
+**type** — `selector: Person` then matches every node of that type:
 
-```
-A[Start]         rectangle, labeled "Start"
-A(Round)         rounded      A((Circle))   circle      A{Decide}   diamond
-A:::tag          tag A with the class `tag`
-class A,B tag    tag several nodes at once
+```spytial-graph
+Alice[Person]  -> Acme[Company]
+Bob[Person]    -> Acme
+
+@atomColor(selector=Person, value='#cfe8d8')
 ```
 
-There is no header and no `TD`/`LR` direction. Layout comes from the annotations,
-not from a keyword.
+Nodes can also be tagged with a class — `A:::tag`, or `class A,B tag` for several
+at once. There is no header and no `TD`/`LR` direction; layout comes from the
+annotations, not a keyword.
 
 ## Spatial operations
 
@@ -78,7 +80,7 @@ A `selector` names nodes or edges:
 
 - an **edge label** (`yes`) — the edges carrying it
 - **`_`** — the unlabeled edges; **`_links`** — every edge
-- a **class** (`tag`) or a **shape** (`diamond`) — the matching nodes
+- a **type** (`Person`) or a **class** (`tag`) — the matching nodes
 
 Put together — a binary tree, children below, left-left and right-right:
 

@@ -5,35 +5,29 @@
 // annotations.js), so a `graph TD` preamble would do nothing. Leave it out.
 //
 // Returns { nodes, edges, classesPerNode }:
-//   nodes:           Map<id, { id, label, shape }>
+//   nodes:           Map<id, { id, type }>   (type is null unless given as [Type])
 //   edges:           Array<{ source, target, kind, label }>
 //   classesPerNode:  Map<id, Set<string>>
 //
 // Edges:
 //   A -> B               an edge
 //   A -> B : left        a labeled edge (the label becomes a selector)
-//   A[Start] -> B(Stop)  endpoints may carry a label/shape (see Nodes)
-// Nodes (a node is implicit from any edge; declare one only to give it a shape
-// or label):
+// Nodes (a node is implicit from any edge; the id is its name):
 //   A                    bare id
-//   A[Start]  A(Start)  A((Start))  A{Decide}  A[[Sub]]  A[(Store)]  A>Tag]
+//   A[Person]            a typed node — `Person` is the node's type, so
+//                        `selector: Person` matches every Person node. All nodes
+//                        render as rectangles; the bracket is a type, not a shape.
 //   A:::tag              class tag (chainable: A:::x:::y)
 //   class A,B,C tag      assign a class to several nodes
 // Comments:  %% rest-of-line
 //
-// For paste-compatibility, a leading `graph`/`flowchart` line and the
-// mermaid-style arrows (-->, -.->, ==>, ---) and pipe labels (A -->|x| B) are
-// also accepted, but the minimal forms above are the notation.
+// For paste-compatibility, a leading `graph`/`flowchart` line, the mermaid-style
+// arrows (-->, -.->, ==>, ---), and pipe labels (A -->|x| B) are also accepted;
+// the other mermaid bracket forms are read as a type too (inner text).
 
-const SHAPE_PATTERNS = [
-  { re: /^\[\[(.+)\]\]$/, name: 'subroutine' },
-  { re: /^\[\((.+)\)\]$/, name: 'cylinder' },
-  { re: /^\(\((.+)\)\)$/, name: 'circle' },
-  { re: /^\[(.+)\]$/,     name: 'rect' },
-  { re: /^\((.+)\)$/,     name: 'round' },
-  { re: /^\{(.+)\}$/,     name: 'diamond' },
-  { re: /^>(.+)\]$/,      name: 'asymmetric' },
-];
+// Any bracket wrapper after an id holds the node's type, e.g. `A[Person]`. The
+// extra forms ((x)), {x}, [[x]], [(x)], >x] are tolerated for pasting.
+const TYPE_BRACKET = /^[[({>]+(.+?)[\])}]+$/;
 
 // Ordered longest-first so a longer arrow matches before one of its substrings
 // (e.g. `-->` before `->`, which it contains as a tail).
@@ -46,7 +40,7 @@ function stripComments(line) {
 }
 
 function parseNodeExpr(raw) {
-  // Pull off chained `:::class` tags first so they don't confuse shape parsing.
+  // Pull off chained `:::class` tags first so they don't confuse type parsing.
   const classes = [];
   const expr = raw.trim().replace(/:::([\w-]+)/g, (_, c) => {
     classes.push(c);
@@ -59,19 +53,13 @@ function parseNodeExpr(raw) {
   const id = m[1];
   const rest = m[2].trim();
 
-  let shape = 'default';
-  let label = id;
+  // An optional [Type] annotation after the id.
+  let type = null;
   if (rest) {
-    for (const { re, name } of SHAPE_PATTERNS) {
-      const sm = rest.match(re);
-      if (sm) {
-        shape = name;
-        label = sm[1].replace(/^["']|["']$/g, '');
-        break;
-      }
-    }
+    const tm = rest.match(TYPE_BRACKET);
+    if (tm) type = tm[1].replace(/^["']|["']$/g, '').trim() || null;
   }
-  return { id, label, shape, classes };
+  return { id, type, classes };
 }
 
 function findArrow(line) {
@@ -128,11 +116,10 @@ export function parseGraph(source) {
   const addNode = (n) => {
     if (!n) return;
     if (!nodes.has(n.id)) {
-      nodes.set(n.id, { id: n.id, label: n.label, shape: n.shape });
-    } else if (n.label !== n.id) {
-      // Prefer the labeled form when both appear in source.
-      nodes.get(n.id).label = n.label;
-      nodes.get(n.id).shape = n.shape;
+      nodes.set(n.id, { id: n.id, type: n.type });
+    } else if (n.type != null) {
+      // Prefer an explicit [Type] when it appears on any mention of the node.
+      nodes.get(n.id).type = n.type;
     }
     for (const c of n.classes) addClass(n.id, c);
   };
