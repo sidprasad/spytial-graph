@@ -14,9 +14,10 @@
 //                  for node annotations like @group / @atomColor
 //
 // Atom type = the node's [Type] annotation (`A[Person]` → 'Person') or 'Node'
-// for a plain `A`, so `selector: Person` targets every Person node. The node's
-// id is its display name. Class names are stored on each atom under
-// `labels.classes`.
+// for a plain `A`, so `selector: Person` targets every Person node. The atom's
+// label is an explicit `label="…"` if given, else the id; the id is always the
+// stable identity (what edges reference). Class names are stored on each atom
+// under `labels.classes`.
 
 // The type a plain `A` carries (vs. an explicit `A[Person]`). Exported so the
 // inverse serializer (serialize.js) knows which type is the implicit default and
@@ -40,7 +41,8 @@ export function relationalize({ nodes, edges, classesPerNode }) {
     const atom = {
       id,
       type: nodeType(node),
-      label: id,
+      // An explicit label="…" wins; otherwise the id is the display label.
+      label: node && node.label != null ? node.label : id,
     };
     const classes = classesPerNode.get(id);
     if (classes && classes.size > 0) {

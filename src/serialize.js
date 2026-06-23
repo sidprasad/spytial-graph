@@ -10,7 +10,7 @@
 //
 // The mapping mirrors relationalize.js exactly:
 //   atom                       → a node; `type !== 'Node'` ⇒ [Type],
-//                                labels.classes ⇒ :::c1:::c2
+//                                `label !== id` ⇒ label="…", labels.classes ⇒ :::c1:::c2
 //   `_` relation               → unlabeled edges            (A -> B)
 //   named binary relation      → labeled edges              (A -> B : name)
 //   `_links` relation          → skipped (selector-only; duplicates the drawn
@@ -43,10 +43,30 @@ function arityOf(rel) {
   return 0;
 }
 
-// The `[Type]:::class` suffix for a node, or '' if it's a plain default node.
+// Quote a label for `label="…"`. Embedded double quotes are rare; fall back to
+// single quotes so the round-trip still parses.
+function quoteLabel(s) {
+  const str = String(s);
+  if (!str.includes('"')) return `"${str}"`;
+  if (!str.includes("'")) return `'${str}'`;
+  return `"${str.replace(/"/g, '')}"`;
+}
+
+// The `[...]` bracket parts for a node: its non-default type, then an explicit
+// label when it differs from the id (the id is the implicit label).
+function bracketParts(atom) {
+  const parts = [];
+  if (atom.type && atom.type !== DEFAULT_TYPE) parts.push(atom.type);
+  if (atom.label != null && atom.label !== atom.id) parts.push(`label=${quoteLabel(atom.label)}`);
+  return parts;
+}
+
+// The `[Type, label="…"]:::class` suffix for a node, or '' if it's a plain
+// default node whose id is also its label.
 function decorate(atom) {
   let s = '';
-  if (atom.type && atom.type !== DEFAULT_TYPE) s += `[${atom.type}]`;
+  const parts = bracketParts(atom);
+  if (parts.length) s += `[${parts.join(', ')}]`;
   const classes = atom.labels && atom.labels.classes;
   if (Array.isArray(classes)) {
     for (const c of classes) s += `:::${c}`;
@@ -55,7 +75,7 @@ function decorate(atom) {
 }
 
 function hasDecoration(atom) {
-  if (atom.type && atom.type !== DEFAULT_TYPE) return true;
+  if (bracketParts(atom).length > 0) return true;
   const classes = atom.labels && atom.labels.classes;
   return Array.isArray(classes) && classes.length > 0;
 }

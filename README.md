@@ -41,6 +41,9 @@ npm run serve   # zero-dep static server, port 8100
 - **Edges** — `A -> B`, or labeled `A -> B : left` (the label becomes a selector).
 - **Nodes** are implicit from edges; the id is the name, and every node is a rectangle.
   A bracket gives the node a **type**: `A[Person]` makes `selector: Person` match it.
+- **Labels** — the id is the display label by default; set a different one with
+  `A[label="Alice"]` (or `A[Person, label="Alice"]` alongside a type). The id stays the
+  stable identity that edges reference — handy for generated/short ids.
 - **Classes** — `A:::tag` (chainable), or `class A,B,C tag` for several at once.
 - **No header, no direction.** Layout comes from the annotations, not a `TD`/`LR` keyword.
 

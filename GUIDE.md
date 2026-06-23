@@ -60,6 +60,16 @@ Bob[Person]    -> Acme
 @atomColor(selector=Person, value='#cfe8d8')
 ```
 
+By default a node's **id is its label**. Give it a different display label with
+`label="…"` — handy when the id is short or generated:
+
+```spytial-graph
+u1[label="Alice"] -> u2[label="Bob"]
+```
+
+Combine it with a type as `u1[Person, label="Alice"]`. The id is still what edges
+reference and what selectors and classes match.
+
 Nodes can also be tagged with a class — `A:::tag`, or `class A,B tag` for several
 at once. There is no header and no `TD`/`LR` direction; layout comes from the
 annotations, not a keyword.

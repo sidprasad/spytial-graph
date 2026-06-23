@@ -19,11 +19,11 @@ function check(name, cond, extra = '') {
   else { fail++; console.error(`FAIL  ${name}  ${extra}`); }
 }
 
-// Canonical fingerprint of a graph: nodes (id→type), classes, edge multiset.
+// Canonical fingerprint of a graph: nodes (id→type→label), classes, edge multiset.
 function fingerprint(text) {
   const { source } = extractAnnotations(text);
   const g = parseGraph(source);
-  const nodes = [...g.nodes.entries()].map(([id, n]) => `${id}:${n.type ?? 'Node'}`).sort();
+  const nodes = [...g.nodes.entries()].map(([id, n]) => `${id}:${n.type ?? 'Node'}:${n.label ?? id}`).sort();
   const classes = [...g.classesPerNode.entries()].map(([id, s]) => `${id}=${[...s].sort().join(',')}`).sort();
   const edges = g.edges.map((e) => `${e.source}->${e.target}:${e.label ?? '_'}`).sort();
   return JSON.stringify({ nodes, classes, edges });
@@ -45,7 +45,11 @@ const cases = {
   'isolated nodes': `A -> B\nLonely\nTagged:::special\nTyped[Gadget]`,
   'multi-label same pair': `A -> B : left\nA -> B : right`,
   'empty graph': ``,
-  'mixed everything': `A[Person]:::vip -> B : left\nA -> C : right\nB -> D\nclass C,D team\nIsl[Thing]`,
+  'label only': `A[label="Alice"] -> B`,
+  'type + label': `A[Person, label="Alice"] -> B[Place, label="Acme"]`,
+  'label with spaces': `A[label="Alice Smith"] -> B[label="Bob Jones"]`,
+  'isolated labeled node': `A -> B\nLone[label="Solo"]`,
+  'mixed everything': `A[Person, label="Alice"]:::vip -> B : left\nA -> C : right\nB -> D\nclass C,D team\nIsl[Thing]`,
 };
 
 for (const [name, text] of Object.entries(cases)) {
@@ -73,6 +77,29 @@ for (const [name, text] of Object.entries(cases)) {
   check('reify-shaped input skips _links/unary',
     fingerprint(out) === fingerprint(`A:::vip -> B : left\nA -> C`), `\n${out}`);
   check('no _links leaked into output', !out.includes('_links'), `\n${out}`);
+}
+
+// Editor-style data: generated ids with distinct human labels (what
+// <structured-input-graph> produces when you add a node labeled "Alice").
+{
+  const data = {
+    atoms: [
+      { id: 'Person1', type: 'Person', label: 'Alice' },
+      { id: 'Person2', type: 'Person', label: 'Bob' },
+    ],
+    relations: [
+      { id: 'rel_unlabeled', name: '_', types: ['Node', 'Node'],
+        tuples: [{ atoms: ['Person1', 'Person2'], types: ['Person', 'Person'] }] },
+    ],
+  };
+  const out = serializeToSpytialGraph(data);
+  check('id≠label emits label="…"',
+    /Person1\[Person, label="Alice"\]/.test(out) && /Person2\[Person, label="Bob"\]/.test(out), `\n${out}`);
+  const g = parseGraph(out);
+  check('re-parsed labels survive',
+    g.nodes.get('Person1').label === 'Alice' && g.nodes.get('Person2').label === 'Bob', `\n${out}`);
+  check('id==label stays bare (no spurious label=)',
+    serializeToSpytialGraph({ atoms: [{ id: 'A', type: 'Node', label: 'A' }], relations: [] }) === 'A');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
