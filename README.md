@@ -2,6 +2,8 @@
 
 *Diagramming in your browser, with semantics.*
 
+[![CI](https://github.com/sidprasad/spytial-graph/actions/workflows/ci.yml/badge.svg)](https://github.com/sidprasad/spytial-graph/actions/workflows/ci.yml)
+
 Write a small graph notation — nodes, edges, and inline spatial `@annotations` — and
 SpyTial renders it as a **live, draggable constraint diagram**. Drop a fenced
 ` ```spytial-graph ` block into Markdown and it comes alive client-side, the way
@@ -17,9 +19,7 @@ A -> C : right
 ```
 
 You get a faithful default layout for free; the `@annotations` refine it — orientation,
-alignment, grouping, cycles — without rebuilding anything. The arrow syntax will look
-familiar, but it's its own notation: no `graph TD` header, and no Mermaid dependency.
-
+alignment, grouping, cycles — without rebuilding anything.
 > **New here? Start with [GUIDE.md](GUIDE.md)** 
 
 ## Try it
@@ -43,8 +43,7 @@ npm run serve   # zero-dep static server, port 8100
 - **Nodes** are implicit from edges; the id is the name, and every node is a rectangle.
 - **Labels** — `A[Alice]` gives a display label, mermaid-style; without one the id is
   shown. The id stays the stable identity that edges reference (handy for generated ids).
-- **Sorts** — `A:::Person` gives the node a type, so `selector: Person` matches it. One
-  sort for now; a chain `A:::Person:::Employee` (a linear hierarchy) is reserved for later.
+- **Sorts** — `A:::Person` gives the node a type, so `selector: Person` matches it.
 - **Classes** — `class A,B,C tag` tags several nodes with a cross-cutting group.
 - **No header, no direction.** Layout comes from the annotations, not a `TD`/`LR` keyword.
 

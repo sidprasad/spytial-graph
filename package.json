@@ -2,6 +2,25 @@
   "name": "spytial-graph",
   "version": "0.2.0-prototype",
   "description": "spytial-graph — a small graph notation with inline spatial @annotations, rendered as live SpyTial constraint diagrams in Markdown or anywhere.",
+  "keywords": [
+    "graph",
+    "diagram",
+    "mermaid",
+    "spytial",
+    "constraint-layout",
+    "visualization",
+    "markdown"
+  ],
+  "author": "Siddhartha Prasad (https://github.com/sidprasad)",
+  "license": "MIT",
+  "homepage": "https://github.com/sidprasad/spytial-graph#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sidprasad/spytial-graph.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sidprasad/spytial-graph/issues"
+  },
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -21,6 +40,5 @@
   },
   "peerDependencies": {
     "spytial-core": ">=2.9"
-  },
-  "license": "MIT"
+  }
 }
