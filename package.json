@@ -1,7 +1,7 @@
 {
   "name": "spytial-graph",
-  "version": "0.2.0-prototype",
-  "description": "spytial-graph — a small graph notation with inline spatial @annotations, rendered as live SpyTial constraint diagrams in Markdown or anywhere.",
+  "version": "0.0.2",
+  "description": "A small graph notation with inline spatial @annotations, rendered as live Spytial constraint diagrams in Markdown or anywhere.",
   "keywords": [
     "graph",
     "diagram",
