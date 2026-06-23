@@ -8,6 +8,7 @@
     ".": "./src/index.js"
   },
   "files": [
+    "index.html",
     "src",
     "playground",
     "examples",
