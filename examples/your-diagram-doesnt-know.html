@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Your diagram doesn't know what it's drawing · spytial-graph</title>
+  <style>
+    :root {
+      --ink: #1c1f26; --soft: #565d6a; --faint: #8b93a1; --line: #e7e9ee;
+      --accent: #1f6f54; --bg: #fcfcfb; --code-bg: #eef0f3;
+      --mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+      --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--serif); line-height: 1.65; -webkit-font-smoothing: antialiased; }
+    .prose { max-width: 680px; margin: 0 auto; padding: 64px 24px 120px; }
+    h1 { font-size: 38px; line-height: 1.14; letter-spacing: -0.022em; margin: 0 0 14px; }
+    .dek { font-size: 19px; color: var(--soft); font-style: italic; margin: 0 0 20px; }
+    .byline { font-family: var(--mono); font-size: 11.5px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.09em; margin: 0 0 46px; }
+    p { font-size: 18.5px; margin: 0 0 22px; }
+    h2 { font-family: var(--mono); font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.11em; color: var(--accent); margin: 50px 0 14px; }
+    code { font-family: var(--mono); font-size: 0.83em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+    a { color: var(--accent); text-underline-offset: 2px; }
+    em { color: var(--ink); }
+    .end { margin-top: 58px; padding-top: 22px; border-top: 1px solid var(--line); font-size: 15px; color: var(--soft); }
+
+    /* The live figures. auto.js replaces each spytial-graph block with one of
+       these wrappers; we just give the surrounding frame + caption styling. */
+    pre.language-spytial-graph, pre.language-spytial-graph-editable,
+    .spytial-graph-rendered {
+      margin: 28px 0 10px; border: 1px solid var(--line); border-radius: 12px;
+      overflow: hidden; background: #fff;
+      box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 8px 26px rgba(16,24,40,.05);
+    }
+    figure { margin: 0 0 30px; }
+    figcaption { font-size: 14.5px; color: var(--soft); font-style: italic; margin: 4px 2px 0; }
+    figcaption b { color: var(--ink); font-style: normal; font-weight: 600; }
+  </style>
+
+  <!-- The engine, straight from the CDN: d3 v4 + WebCola + spytial-core.
+       spytial-core registers <webcola-cnd-graph> and <structured-input-graph>. -->
+  <script src="https://d3js.org/d3.v4.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/webcola@3.4.0/WebCola/cola.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/spytial-core@2.9.1/dist/browser/spytial-core-complete.global.js"></script>
+</head>
+<body>
+  <div class="prose">
+
+    <h1>Your diagram doesn't know what it's drawing</h1>
+    <p class="dek">A box-and-arrow picture is a drawing. I wanted a model — something with a meaning under it, that I can constrain, query, and get back as text.</p>
+    <p class="byline">spytial-graph · an introduction</p>
+
+    <p>I draw a lot of diagrams. Boxes, arrows, a dashed line for the part I'm
+      not sure of yet. For years the workflow was: draw it by hand, fight a
+      layout tool, and either way end up with a flat, final, <em>dead</em>
+      picture. A PNG you screenshot, paste, and three weeks later redraw from
+      scratch because one box moved.</p>
+
+    <p>Mermaid fixed one real thing about this: the diagram became <em>text</em>.
+      You write <code>A --&gt; B</code>, you get an arrow, and the diagram now
+      lives in your repo, diffs in your PR, survives. That's a genuine win and I
+      don't want to undersell it. spytial-graph keeps it — drop one block into a
+      page and it comes alive in the browser, no build step:</p>
+
+    <figure>
+<pre><code class="language-spytial-graph">a[Alice] -&gt; b[Bob]   : knows
+b        -&gt; c[Carol] : knows
+a        -&gt; c        : knows
+</code></pre>
+      <figcaption>Live, draggable, straight from a CDN. The <code>[Alice]</code>
+        is a display label; the <code>a</code> is the identity edges refer to.</figcaption>
+    </figure>
+
+    <p>But notice what that Mermaid text <em>is</em>. It's a drawing program.
+      <code>graph TD</code> means "lay this out top-down." <code>A --&gt; B</code>
+      means "draw an arrow." The text describes the <em>picture</em>. It does not
+      describe the <em>thing</em>. The renderer doesn't know A and B are people,
+      or files, or states — it knows they're boxes and you'd like an arrow. Ask
+      it to "put every Person to the left of the File they own" and it has no
+      idea what you mean. There are no Persons, no Files, no <em>owns</em>. Boxes
+      and arrows, all the way down.</p>
+
+    <h2>Start from the meaning</h2>
+
+    <p>spytial-graph starts from the other end. The text isn't a drawing
+      program; it's a tiny model. <code>a[Alice]:::Person</code> says: there's an
+      atom, its identity is <code>a</code>, you'd display it as Alice, and its
+      <em>sort</em> is Person. <code>a -&gt; f : owns</code> says: there's an
+      <em>owns</em> relation from <code>a</code> to <code>f</code>. None of that
+      mentions the picture. The picture is what you get when you stop talking.</p>
+
+    <p>And when you <em>do</em> want to say something about the picture, you say
+      it in terms of the model, not the pixels:</p>
+
+    <figure>
+<pre><code class="language-spytial-graph">a[Alice]:::Person -&gt; f[budget.xlsx]:::File : owns
+b[Bob]:::Person   -&gt; f                     : owns
+c[Carol]:::Person -&gt; g[notes.md]:::File    : owns
+
+@orientation(selector=owns, directions=[right])
+@atomColor(selector=Person, value='#e7f0ff')
+@atomColor(selector=File,   value='#fff1d9')
+</code></pre>
+      <figcaption><code>selector=owns</code> is <b>every owns-edge</b>;
+        <code>selector=Person</code> is <b>every Person</b> — because owns and
+        Person are real things in the model, not spellings on a box.</figcaption>
+    </figure>
+
+    <p>You're not nudging boxes. You state a constraint and a solver finds a
+      layout that satisfies it — or tells you, precisely, that it can't, and
+      which constraints are fighting. A picture can't be wrong. A
+      picture-<em>with-claims</em> can, and that's the entire point.</p>
+
+    <h2>The arrow goes both ways</h2>
+
+    <p>Here's the part I find genuinely delightful. Because the text is a model
+      and not a drawing, you can run it backwards. Render a graph into an
+      <em>editor</em>, rearrange it by hand, add a node, draw an edge — then ask
+      for the notation back. You get text again: the same little language you
+      started from, your annotations re-appended verbatim.</p>
+
+    <figure>
+<pre><code class="language-spytial-graph-editable">a[Alice] -&gt; b[Bob]   : reports
+c[Carol] -&gt; b        : reports
+
+@orientation(selector=reports, directions=[below])
+</code></pre>
+      <figcaption>Drag a node, add one, connect it — then hit
+        <b>⧉&nbsp;notation</b> in the corner. That's your edited graph, as text
+        you can paste back into the repo.</figcaption>
+    </figure>
+
+    <p>The picture and the source aren't two artifacts you keep in sync by hand.
+      They're one object seen from two sides. Edit either; the other is just a
+      projection away.</p>
+
+    <h2>Small on purpose</h2>
+
+    <p>This is a small language, deliberately. Nodes, edges, labels, sorts,
+      classes; a handful of spatial annotations; no swimlanes, no Gantt charts,
+      no sequence diagrams. What the smallness buys is that the diagram
+      <em>means something</em>: there's a model under the picture, the layout is
+      a consequence you can argue with, and you can always recover your text.</p>
+
+    <p>A diagram you can't query, can't constrain, and can't get back as source
+      isn't a model of your system. It's a drawing of one. I wanted the model.</p>
+
+    <p class="end">spytial-graph is a few kilobytes over a CDN — one script tag
+      turns every <code>spytial-graph</code> block on a page into a live diagram.
+      This post is one such page; <a href="https://github.com/sidprasad/spytial-graph">the
+      source and the notation guide are on GitHub</a>.</p>
+
+  </div>
+
+  <!-- One module turns every block above into a live diagram. In a published
+       page this is the single CDN line:
+         <script type="module" src="https://cdn.jsdelivr.net/npm/spytial-graph/src/auto.js"></script>
+       Here we import locally so it runs under `npm run serve` before the first
+       npm publish. -->
+  <script type="module">
+    import { autoRender } from '../src/markdown.js';
+    autoRender();
+  </script>
+</body>
+</html>

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Markdown viewer · spytial-graph</title>
+  <style>
+    :root {
+      --ink: #1c1f26; --soft: #565d6a; --faint: #8b93a1; --line: #e7e9ee;
+      --accent: #1f6f54; --bg: #fcfcfb; --code-bg: #eef0f3;
+      --mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+      --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--serif); line-height: 1.65; -webkit-font-smoothing: antialiased; }
+    #doc { max-width: 680px; margin: 0 auto; padding: 64px 24px 120px; }
+    #doc h1 { font-size: 38px; line-height: 1.14; letter-spacing: -0.022em; margin: 0 0 14px; }
+    /* The dek: marked renders the leading *italic* line as a normal <em> in a <p>;
+       give the first paragraph a little more presence. */
+    #doc h1 + p { font-size: 19px; color: var(--soft); margin: 0 0 36px; }
+    #doc p { font-size: 18.5px; margin: 0 0 22px; }
+    #doc h2 { font-family: var(--mono); font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.11em; color: var(--accent); margin: 50px 0 14px; }
+    #doc code { font-family: var(--mono); font-size: 0.83em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+    #doc a { color: var(--accent); text-underline-offset: 2px; }
+    #doc em { color: var(--ink); }
+    #doc hr { border: none; border-top: 1px solid var(--line); margin: 40px 0; }
+    #doc table { border-collapse: collapse; font-size: 15px; margin: 8px 0 24px; }
+    #doc th, #doc td { border: 1px solid var(--line); padding: 7px 12px; text-align: left; }
+    /* Code blocks that AREN'T spytial-graph render as plain code; the spytial
+       ones get replaced by auto.js with a bordered live diagram. */
+    #doc pre { background: var(--code-bg); border-radius: 10px; padding: 14px 16px; overflow: auto; font-size: 13px; }
+    #doc .spytial-graph-rendered { box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 8px 26px rgba(16,24,40,.05); }
+    #status { max-width: 680px; margin: 0 auto; padding: 16px 24px; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  </style>
+</head>
+<body>
+  <div id="status">loading…</div>
+  <article id="doc"></article>
+
+  <!-- A markdown renderer. This is the one piece a raw .md can't supply itself. -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+  <script type="module">
+    import { renderSpytialGraphs } from '../src/markdown.js';
+
+    const status = document.getElementById('status');
+    const doc = document.getElementById('doc');
+
+    // ?doc=<path> chooses the markdown file; default to the intro post.
+    const params = new URLSearchParams(location.search);
+    const src = params.get('doc') || 'your-diagram-doesnt-know.md';
+
+    try {
+      const md = await fetch(src).then(r => {
+        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+        return r.text();
+      });
+
+      // 1. markdown -> HTML. marked tags fenced blocks as
+      //    <pre><code class="language-spytial-graph">, which is exactly what
+      //    auto.js looks for. (The .md's own trailing <script> is inert here —
+      //    innerHTML never executes scripts — so the host drives rendering.)
+      doc.innerHTML = marked.parse(md);
+
+      // 2. light up every spytial-graph block in the rendered HTML (the engine
+      //    is injected from the CDN if it isn't already present).
+      const results = await renderSpytialGraphs(doc);
+      const live = results.filter(r => !r.error).length;
+      status.textContent = `${src} — ${live} live diagram${live === 1 ? '' : 's'}`;
+    } catch (err) {
+      status.textContent = `failed to load ${src}: ${err.message}`;
+      console.error(err);
+    }
+  </script>
+</body>
+</html>
