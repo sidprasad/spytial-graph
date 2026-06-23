@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Diagrams that edit back · spytial-graph</title>
+  <style>
+    :root {
+      --ink: #1d2230; --soft: #5b6472; --faint: #8c95a3; --line: #e6e8ec;
+      --accent: #2d8659; --bg: #fbfbfa; --card: #ffffff; --panel: #fafbfc;
+      --mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+      --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--serif); line-height: 1.65; -webkit-font-smoothing: antialiased; }
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 56px 24px 110px; }
+    .prose { max-width: 680px; margin: 0 auto; }
+
+    h1 { font-size: 40px; line-height: 1.12; letter-spacing: -0.022em; margin: 0 0 12px; }
+    .dek { font-size: 20px; color: var(--soft); font-style: italic; margin: 0 0 18px; }
+    .byline { font-family: var(--mono); font-size: 11.5px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.09em; margin: 0 0 44px; }
+    .prose p { font-size: 18.5px; margin: 0 0 22px; }
+    .prose h2 { font-family: var(--mono); font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.11em; color: var(--accent); margin: 48px 0 12px; }
+    code { font-family: var(--mono); font-size: 0.84em; background: #eef0f3; padding: 1px 5px; border-radius: 4px; }
+    a { color: var(--accent); text-underline-offset: 2px; }
+
+    /* Interactive figures break out wider than the prose column. */
+    .figure { margin: 30px auto 34px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 10px 30px rgba(16,24,40,.06); overflow: hidden; }
+    .figure .grid { display: grid; grid-template-columns: 1.3fr 1fr; }
+    .fig-graph { position: relative; min-height: 400px; border-right: 1px solid var(--line); background: var(--card); }
+    structured-input-graph { display: block; width: 100%; height: 400px; }
+    .fig-side { display: flex; flex-direction: column; min-width: 0; background: var(--panel); }
+    .fig-side h3 { margin: 0; font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--faint); padding: 11px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .fig-copy { font: inherit; font-family: var(--mono); font-size: 10.5px; text-transform: none; letter-spacing: 0; border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 3px 9px; cursor: pointer; color: var(--ink); }
+    .fig-copy:hover { border-color: var(--faint); }
+    .fig-notation, .fig-value { font-family: var(--mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; padding: 13px 15px; margin: 0; overflow: auto; flex: 1; color: var(--ink); }
+    .fig-value { white-space: pre; max-height: 168px; border-top: 1px solid var(--line); background: #f5f7f9; color: var(--soft); }
+    figcaption { font-size: 14.5px; color: var(--soft); font-style: italic; padding: 12px 16px; border-top: 1px solid var(--line); background: var(--panel); }
+    figcaption b { color: var(--ink); font-style: normal; font-weight: 600; }
+
+    @media (max-width: 760px) {
+      .figure .grid { grid-template-columns: 1fr; }
+      .fig-graph { border-right: none; border-bottom: 1px solid var(--line); }
+      h1 { font-size: 32px; }
+    }
+    .end { margin-top: 56px; padding-top: 22px; border-top: 1px solid var(--line); font-size: 15px; color: var(--soft); }
+  </style>
+
+  <!-- The engine: d3 v4 + WebCola + spytial-core (registers the custom elements). -->
+  <script src="https://d3js.org/d3.v4.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/webcola@3.4.0/WebCola/cola.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/spytial-core@2.9.1/dist/browser/spytial-core-complete.global.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <div class="prose">
+      <h1>Diagrams that edit back</h1>
+      <p class="dek">Most diagrams are dead pictures. These are live values — drag one, and it rewrites its own source.</p>
+      <p class="byline">spytial-graph · an explorable</p>
+
+      <p>
+        You draw a diagram, export a PNG, and that's the end of it. The picture and the
+        text that made it drift apart immediately; the next person to change it starts over.
+        A <strong>spytial-graph</strong> doesn't end there. It's a small text notation — nodes,
+        edges, and inline spatial rules — but the rendered diagram is the same object as the
+        text, in both directions. Edit either; the other follows.
+      </p>
+
+      <h2>Grab it</h2>
+      <p>
+        Here's one. Drag a node — the layout flexes to keep its shape. Use <code>+ Node</code>
+        and <code>+ Relation</code>, or drag from one node onto another to connect them. Watch
+        the panel on the right: it isn't a saved copy of the source, it's <em>re-derived from
+        the graph</em> after every edit.
+      </p>
+    </div>
+
+    <figure class="figure">
+      <div class="grid">
+        <div class="fig-graph"></div>
+        <div class="fig-side">
+          <h3>notation <button class="fig-copy" type="button">copy notation</button></h3>
+          <pre class="fig-notation"></pre>
+        </div>
+      </div>
+      <figcaption>Every change on the left regenerates the notation on the right. <b>Try adding a node, then connecting it.</b></figcaption>
+      <script type="text/spytial">
+A -> B
+B -> C
+B -> D
+      </script>
+    </figure>
+
+    <div class="prose">
+      <h2>Constraints, not coordinates</h2>
+      <p>
+        The trick to that flexing is that you never gave any coordinates. You stated
+        <em>relationships</em>, and an inline rule — <code>@orientation</code> — says which way
+        edges should point. SpyTial solves for positions that satisfy the rules. So the layout
+        isn't a thing you maintain by hand; it's a thing the graph keeps true on its own.
+      </p>
+      <p>
+        This one is a tree: every edge points down, <code>left</code> edges also go left,
+        <code>right</code> edges go right. Add a relation named <code>left</code> or
+        <code>right</code> between two nodes and it places itself — no dragging into position.
+      </p>
+    </div>
+
+    <figure class="figure">
+      <div class="grid">
+        <div class="fig-graph"></div>
+        <div class="fig-side">
+          <h3>notation <button class="fig-copy" type="button">copy notation</button></h3>
+          <pre class="fig-notation"></pre>
+        </div>
+      </div>
+      <figcaption>The three <code>@orientation</code> lines are the layout. <b>Add a <code>left</code> or <code>right</code> relation</b> and watch it snap into place.</figcaption>
+      <script type="text/spytial">
+root -> l : left
+root -> r : right
+l -> ll : left
+l -> lr : right
+
+@orientation(selector=_links, directions=[below])
+@orientation(selector=left,  directions=[left])
+@orientation(selector=right, directions=[right])
+      </script>
+    </figure>
+
+    <div class="prose">
+      <h2>It isn't a picture — it's a value</h2>
+      <p>
+        Because the diagram is reified, your code can read it. <code>getValue()</code> hands you
+        the atoms and relations as plain JSON; <code>getSource()</code> hands back the notation.
+        Same object, two views — edit the graph and both update live. A node's <em>id</em> is its
+        stable identity (what edges reference); give it a friendlier <code>label="…"</code> for
+        display, the way these people have names but the edges still wire up by id.
+      </p>
+    </div>
+
+    <figure class="figure">
+      <div class="grid">
+        <div class="fig-graph"></div>
+        <div class="fig-side">
+          <h3>notation <button class="fig-copy" type="button">copy notation</button></h3>
+          <pre class="fig-notation"></pre>
+          <h3>value · getValue()</h3>
+          <pre class="fig-value"></pre>
+        </div>
+      </div>
+      <figcaption>Two faithful views of one object. <b>Rename or add someone</b> — the notation and the JSON move together.</figcaption>
+      <script type="text/spytial">
+a[label="Alice"] -> b[label="Bob"]   : knows
+b -> c[label="Carol"] : knows
+a -> c : knows
+      </script>
+    </figure>
+
+    <div class="prose">
+      <h2>Take it with you</h2>
+      <p>
+        Hit <em>copy notation</em> on any figure above and you have plain text you can paste into
+        a doc, a commit, an issue. Drop it back into a page as a
+        <code>```spytial-graph</code> block and it renders again; tag the block
+        <code>```spytial-graph-editable</code> and your readers get exactly what you've been
+        using here — a diagram that edits back.
+      </p>
+
+      <p class="end">
+        Built with <a href="../playground/">spytial-graph</a>. Open the
+        <a href="../playground/">playground</a> to start from a blank one, or read the
+        <a href="../GUIDE.md">guide</a>.
+      </p>
+    </div>
+  </div>
+
+  <script type="module">
+    import { renderSpytialGraphEditable } from '../src/index.js';
+
+    function ready() {
+      const c = window.spytialcore || window.CndCore;
+      return c && c.JSONDataInstance && c.LayoutInstance && customElements.get('structured-input-graph');
+    }
+    async function whenReady() {
+      const start = Date.now();
+      while (!ready()) {
+        if (Date.now() - start > 10000) throw new Error('spytial-core did not load (check the CDN)');
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+
+    async function wireFigure(fig) {
+      const host = fig.querySelector('.fig-graph');
+      const notationEl = fig.querySelector('.fig-notation');
+      const valueEl = fig.querySelector('.fig-value');
+      const source = fig.querySelector('script[type="text/spytial"]').textContent.trim();
+
+      const handle = await renderSpytialGraphEditable(host, source);
+      const paint = (detail) => {
+        if (notationEl) notationEl.textContent = detail ? detail.source : handle.getSource();
+        if (valueEl) valueEl.textContent = JSON.stringify(detail ? detail.value : handle.getValue(), null, 2);
+      };
+      handle.onChange(paint);
+      paint();
+
+      // Frame the graph in its panel. The force layout keeps settling after the
+      // first paint, so re-fit a few times as it comes to rest.
+      const fit = () => { try { handle.element.resetViewToFitContent && handle.element.resetViewToFitContent(); } catch (_) {} };
+      fit();
+      for (const ms of [350, 900, 1600]) setTimeout(fit, ms);
+
+      const copy = fig.querySelector('.fig-copy');
+      if (copy) copy.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(handle.getSource());
+          copy.textContent = 'copied ✓';
+          setTimeout(() => { copy.textContent = 'copy notation'; }, 1200);
+        } catch (_) { window.prompt('spytial-graph notation:', handle.getSource()); }
+      });
+    }
+
+    (async () => {
+      try {
+        await whenReady();
+        // Render figures sequentially so several editors don't fight over layout.
+        for (const fig of document.querySelectorAll('.figure')) await wireFigure(fig);
+      } catch (err) {
+        console.error(err);
+        for (const h of document.querySelectorAll('.fig-graph')) h.textContent = '⚠ ' + err.message;
+      }
+    })();
+  </script>
+</body>
+</html>

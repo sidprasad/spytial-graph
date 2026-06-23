@@ -32,6 +32,7 @@ npm run serve   # zero-dep static server, port 8100
 # /examples/guide.html         the guide, rendered by spytial-graph itself
 # /examples/binary-tree.html   programmatic API demo
 # /examples/editable.html      editable graph — edit visually, re-get the notation
+# /examples/diagrams-that-edit-back.html   "explorable" post built on the editor
 ```
 
 (Any static server works; one is needed only because the pages load ES modules.)
