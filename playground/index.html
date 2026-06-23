@@ -123,7 +123,31 @@
             background: var(--canvas); border: 1px solid var(--border);
             box-shadow: var(--shadow); overflow: hidden;
         }
-        webcola-cnd-graph { display: block; width: 100%; height: 100%; }
+        webcola-cnd-graph, structured-input-graph { display: block; width: 100%; height: 100%; }
+        webcola-cnd-graph[hidden], structured-input-graph[hidden] { display: none; }
+
+        /* View / Edit segmented toggle + preview-bar buttons */
+        .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+        .seg button { font: inherit; font-size: 12.5px; padding: 5px 13px; background: var(--chrome-2); color: var(--ink-soft); border: none; cursor: pointer; transition: background .12s, color .12s; }
+        .seg button + button { border-left: 1px solid var(--border); }
+        .seg button.active { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+        .preview-bar .ghost { font: inherit; font-size: 12.5px; background: var(--chrome-2); color: var(--ink); border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+        .preview-bar .ghost:hover { border-color: var(--border-strong); }
+        .preview-bar .ghost.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+        .preview-bar .ghost[hidden] { display: none; }
+
+        /* Editor in live-mirror (edit) mode — output, not input */
+        textarea.code.mirror { background: var(--chrome-2); color: var(--ink-soft); }
+
+        /* Reified-value inspector panel */
+        .value-panel {
+            position: absolute; bottom: 22px; left: 26px; width: min(360px, 55%); max-height: 52%;
+            overflow: auto; z-index: 9; background: var(--chrome); color: var(--ink);
+            border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow);
+            font-family: "SF Mono", "JetBrains Mono", "Fira Code", monospace; font-size: 11.5px;
+            line-height: 1.5; white-space: pre; padding: 12px 14px; margin: 0;
+        }
+        .value-panel[hidden] { display: none; }
 
         #error-messages {
             position: absolute; left: 26px; right: 26px; bottom: 22px;
@@ -192,13 +216,21 @@
         <!-- RIGHT: live diagram -->
         <section class="pane right">
             <div class="preview-bar">
-                <span class="hint">✦ drag nodes — constraints hold</span>
-                <span class="hint">⊙ scroll to zoom</span>
+                <div class="seg" role="group" aria-label="View or edit the graph">
+                    <button id="mode-view" class="active" type="button" title="Read-only diagram">View</button>
+                    <button id="mode-edit" type="button" title="Edit the graph; the notation mirrors your edits">Edit</button>
+                </div>
+                <button class="ghost" id="sync-btn" type="button" title="Write the edited graph back to the notation" hidden>⤓ Sync to text</button>
+                <button class="ghost" id="value-btn" type="button" title="Show the reified value (JSON)">{ } value</button>
+                <span class="hint" id="view-hint">✦ drag nodes — constraints hold</span>
+                <span class="hint" id="edit-hint" style="display:none;">✦ + Node / + Relation, drag to connect — notation updates live</span>
                 <span class="hint" id="conflict-hint" style="color:#d6453c; display:none;">⚠ rules clash — see explanation</span>
             </div>
             <div class="preview-body">
                 <div class="canvas-wrap">
                     <webcola-cnd-graph id="graph" theme="light" aria-label="Live constraint diagram"></webcola-cnd-graph>
+                    <structured-input-graph id="input-graph" theme="light" aria-label="Editable constraint diagram" hidden></structured-input-graph>
+                    <pre class="value-panel" id="value-panel" hidden></pre>
                     <div id="error-messages"></div>
                 </div>
             </div>
@@ -215,7 +247,7 @@
     <script src="https://cdn.jsdelivr.net/npm/spytial-core@2.9.1/dist/components/react-component-integration.global.js"></script>
 
     <script type="module">
-        import { renderSpytialGraph } from '../src/index.js';
+        import { renderSpytialGraph, renderSpytialGraphEditable } from '../src/index.js';
 
         // ─── Examples (one combined source: graph + inline @annotations) ──────
         // Selectors below match what relationalize.js emits:
@@ -279,8 +311,22 @@ c -> a : r3
         // ─── Element refs / state ───────────────────────────────────────
         const sourceEl = document.getElementById('source-input');
         const graphEl = document.getElementById('graph');
+        const inputGraphEl = document.getElementById('input-graph');
         const statusEl = document.getElementById('status');
         const applyBtn = document.getElementById('apply-btn');
+        const modeViewBtn = document.getElementById('mode-view');
+        const modeEditBtn = document.getElementById('mode-edit');
+        const syncBtn = document.getElementById('sync-btn');
+        const valueBtn = document.getElementById('value-btn');
+        const valuePanel = document.getElementById('value-panel');
+
+        // View ⇄ Edit state. In View, the textarea is the source of truth and we
+        // render a read-only diagram. In Edit, the structured-input graph is the
+        // source of truth and the textarea mirrors its serialized notation.
+        let mode = 'view';
+        let editHandle = null;   // handle from renderSpytialGraphEditable
+        let editUnsub = null;    // its onChange unsubscribe
+        let valueOpen = false;
 
         function setStatus(msg, kind = 'info') {
             statusEl.className = `status ${kind}`;
@@ -288,14 +334,15 @@ c -> a : r3
         }
 
         // The graph component only auto-fits on first connect; re-fit after render.
-        function fitView() {
-            try { graphEl.resetViewToFitContent && graphEl.resetViewToFitContent(); } catch (e) {}
+        function fitEl(el) {
+            try { el.resetViewToFitContent && el.resetViewToFitContent(); } catch (e) {}
         }
+        function fitView() { fitEl(graphEl); }
 
         // Hide the canvas's dev-tool dropdowns (routing strategy + a Mode toggle
         // that duplicates our header theme switch). Keep zoom + PNG export.
-        function tidyCanvasChrome() {
-            const sr = graphEl.shadowRoot;
+        function tidyCanvasChrome(el = graphEl) {
+            const sr = el.shadowRoot;
             if (!sr || sr.getElementById('pg-tidy')) return;
             const style = document.createElement('style');
             style.id = 'pg-tidy';
@@ -306,7 +353,9 @@ c -> a : r3
         // ─── Theme ──────────────────────────────────────────────────────
         function applyTheme(theme) {
             document.documentElement.setAttribute('data-theme', theme);
-            graphEl.setAttribute('theme', theme === 'dark' ? 'dark' : 'light');
+            const t = theme === 'dark' ? 'dark' : 'light';
+            graphEl.setAttribute('theme', t);
+            inputGraphEl.setAttribute('theme', t);
             document.getElementById('theme-btn').textContent = theme === 'dark' ? '☀' : '☾';
             try { localStorage.setItem('spytial-graph-theme', theme); } catch (e) {}
         }
@@ -344,12 +393,15 @@ c -> a : r3
             const src = EXAMPLES[e.target.value];
             if (!src) return;
             sourceEl.value = src;
-            apply();
+            // Loading an example resets to View (its own source of truth).
+            if (mode === 'edit') enterView(); else apply();
             e.target.selectedIndex = 0;
         });
 
         // ─── The pipeline: graph + @annotations -> live constraint diagram ───
         async function apply() {
+            // Edit mode renders live from the structured-input graph; nothing to apply.
+            if (mode === 'edit') return;
             window.clearAllErrors && window.clearAllErrors();
             document.getElementById('conflict-hint').style.display = 'none';
             writeHash();
@@ -388,6 +440,92 @@ c -> a : r3
             }
         }
         window.apply = apply;
+
+        // ─── View ⇄ Edit ─────────────────────────────────────────────────
+        function setModeButtons() {
+            modeViewBtn.classList.toggle('active', mode === 'view');
+            modeEditBtn.classList.toggle('active', mode === 'edit');
+            document.getElementById('view-hint').style.display = mode === 'view' ? '' : 'none';
+            document.getElementById('edit-hint').style.display = mode === 'edit' ? '' : 'none';
+        }
+
+        function teardownEdit() {
+            if (editUnsub) { editUnsub(); editUnsub = null; }
+            editHandle = null;
+        }
+
+        function currentValue() {
+            if (mode === 'edit' && editHandle) { try { return editHandle.getValue(); } catch (e) {} }
+            return null;
+        }
+        function updateValuePanel(data) {
+            if (!valueOpen) return;
+            const v = data !== undefined ? data : currentValue();
+            try {
+                valuePanel.textContent = v
+                    ? JSON.stringify(v, null, 2)
+                    : '// switch to Edit to inspect the live value';
+            } catch (e) { valuePanel.textContent = '// (unserializable value)'; }
+        }
+        valueBtn.onclick = () => {
+            valueOpen = !valueOpen;
+            valuePanel.hidden = !valueOpen;
+            valueBtn.classList.toggle('active', valueOpen);
+            if (valueOpen) updateValuePanel();
+        };
+
+        // Edit: hand the current notation to the structured-input editor and let
+        // it own the graph; mirror its serialized notation back into the textarea.
+        async function enterEdit() {
+            if (mode === 'edit') return;
+            if (!sourceEl.value.trim()) { setStatus('Write a graph first, then switch to Edit.', 'error'); return; }
+            mode = 'edit';
+            setModeButtons();
+            teardownEdit();
+            window.clearAllErrors && window.clearAllErrors();
+            document.getElementById('conflict-hint').style.display = 'none';
+            graphEl.hidden = true; inputGraphEl.hidden = false;
+            sourceEl.readOnly = true; sourceEl.classList.add('mirror');
+            syncBtn.hidden = false; applyBtn.style.display = 'none';
+
+            let handle;
+            try {
+                handle = await renderSpytialGraphEditable(inputGraphEl, sourceEl.value);
+            } catch (err) {
+                console.error(err); setStatus('Edit error: ' + err.message, 'error'); return;
+            }
+            if (handle.applied === false) { setStatus(handle.reason || 'Nothing to edit.', 'error'); return; }
+            editHandle = handle;
+            // Live notation mirror: every edit re-serializes back into the textarea.
+            editUnsub = handle.onChange(({ source, value, error }) => {
+                sourceEl.value = source;
+                writeHash();
+                updateValuePanel(value);
+                if (error) setStatus('Edited — these rules clash on the new graph.', 'error');
+                else setStatus('Edited — notation updated.', 'success');
+            });
+            updateValuePanel(handle.getValue());
+            tidyCanvasChrome(inputGraphEl);
+            setStatus('Edit mode — add nodes / edges; the notation mirrors your edits.', 'info');
+            fitEl(inputGraphEl); setTimeout(() => fitEl(inputGraphEl), 450);
+        }
+
+        // View: tear down the editor and re-render the (now-synced) notation read-only.
+        function enterView() {
+            mode = 'view';
+            setModeButtons();
+            teardownEdit();
+            inputGraphEl.hidden = true; graphEl.hidden = false;
+            sourceEl.readOnly = false; sourceEl.classList.remove('mirror');
+            syncBtn.hidden = true; applyBtn.style.display = '';
+            apply();
+        }
+
+        modeViewBtn.onclick = () => { if (mode !== 'view') enterView(); };
+        modeEditBtn.onclick = () => { enterEdit(); };
+        syncBtn.onclick = () => {
+            if (editHandle) { sourceEl.value = editHandle.getSource(); writeHash(); toast('Notation synced to text'); }
+        };
 
         function handleConflict(error) {
             if (error.errorMessages) {
@@ -432,7 +570,8 @@ c -> a : r3
             const core = window.spytialcore || window.CndCore;
             return !!(core && core.JSONDataInstance && core.LayoutInstance &&
                       core.parseLayoutSpec && core.SGraphQueryEvaluator &&
-                      customElements.get('webcola-cnd-graph'));
+                      customElements.get('webcola-cnd-graph') &&
+                      customElements.get('structured-input-graph'));
         }
         function waitForEngine(timeoutMs = 10000) {
             return new Promise((resolve, reject) => {

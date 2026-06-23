@@ -18,7 +18,10 @@
 // id is its display name. Class names are stored on each atom under
 // `labels.classes`.
 
-const DEFAULT_TYPE = 'Node';
+// The type a plain `A` carries (vs. an explicit `A[Person]`). Exported so the
+// inverse serializer (serialize.js) knows which type is the implicit default and
+// can omit it.
+export const DEFAULT_TYPE = 'Node';
 
 // Relation carrying unlabeled edges. index.js blanks this name on the rendered
 // edges (an unlabeled edge shouldn't display its synthetic relation name).

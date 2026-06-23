@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>spytial-graph · editable (examine, update, re-get the notation)</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; background: #fafafa; color: #1d2230; }
+    h1 { font-size: 18px; margin: 0 0 4px 0; }
+    p.lede { font-size: 13.5px; color: #5b6472; margin: 0 0 14px 0; max-width: 70ch; }
+    h2 { font-size: 13px; margin: 0 0 6px 0; color: #444; display: flex; align-items: center; gap: 8px; }
+    .panel { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; align-items: start; }
+    .col { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
+    pre { font-size: 12px; line-height: 1.5; background: #f4f5f7; padding: 10px 12px; border-radius: 6px; overflow: auto; margin: 0 0 14px 0; white-space: pre-wrap; }
+    pre#value { white-space: pre; max-height: 280px; }
+    .status { font-size: 13px; font-weight: 600; margin: 0 0 10px 0; }
+    .status.ok { color: #2a7; } .status.err { color: #c33; }
+    button { font: inherit; font-size: 12px; padding: 4px 10px; border: 1px solid #cdd2db; border-radius: 6px; background: #fff; cursor: pointer; }
+    button:hover { border-color: #9aa3b1; }
+    .count { font-size: 11.5px; color: #8c95a3; font-weight: 500; }
+    /* renderSpytialGraphEditable() creates a <structured-input-graph> inside #out. */
+    #out { position: relative; }
+    structured-input-graph { display: block; width: 100%; height: 460px; border: 1px solid #ddd; border-radius: 6px; background: #fff; }
+  </style>
+
+  <!-- d3 v4 + WebCola + spytial-core (engine + auto-registered custom elements) -->
+  <script src="https://d3js.org/d3.v4.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/webcola@3.4.0/WebCola/cola.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/spytial-core@2.9.1/dist/browser/spytial-core-complete.global.js"></script>
+</head>
+<body>
+  <h1>spytial-graph — editable embedding</h1>
+  <p class="lede">
+    Render a graph you can <strong>examine and update</strong> in a plain static page. Use the
+    toolbar (+ Node, + Relation) or drag between nodes to edit; constraints re-solve live. The
+    panels on the right update on every edit — the <strong>notation</strong> is re-derived from the
+    edited graph (<code>handle.getSource()</code>), and the <strong>value</strong> is its reified
+    JSON (<code>handle.getValue()</code>). That round-trip is the whole point.
+  </p>
+
+  <div class="status" id="status">initializing…</div>
+
+  <div class="panel">
+    <div class="col">
+      <h2>edit me</h2>
+      <div id="out"></div>
+    </div>
+    <div class="col">
+      <h2>notation <button id="copy" type="button">copy</button> <span class="count" id="count"></span></h2>
+      <pre id="notation"></pre>
+      <h2>value — reified JSON</h2>
+      <pre id="value"></pre>
+    </div>
+  </div>
+
+  <script type="module">
+    import { renderSpytialGraphEditable } from '../src/index.js';
+
+    // A small binary tree, with inline spatial @annotations. Editing the graph
+    // never touches these directives — they round-trip verbatim in getSource().
+    const SOURCE = `A -> B : left
+A -> C : right
+B -> D : left
+B -> E : right
+
+@orientation(selector=_links, directions=[below])
+@orientation(selector=left,  directions=[left])
+@orientation(selector=right, directions=[right])`;
+
+    const statusEl = document.getElementById('status');
+    const setStatus = (msg, ok = true) => {
+      statusEl.textContent = msg;
+      statusEl.className = 'status ' + (ok ? 'ok' : 'err');
+    };
+
+    // Wait for the engine (spytial-core exposes its global asynchronously and
+    // registers <structured-input-graph> as a side effect).
+    function ready() {
+      const core = window.spytialcore || window.CndCore;
+      return core && core.JSONDataInstance && core.LayoutInstance &&
+        customElements.get('structured-input-graph');
+    }
+
+    (async function go() {
+      const start = Date.now();
+      while (!ready()) {
+        if (Date.now() - start > 10000) { setStatus('spytial-core did not load (check network/CDN)', false); return; }
+        await new Promise(r => setTimeout(r, 50));
+      }
+
+      let handle;
+      try {
+        handle = await renderSpytialGraphEditable(document.getElementById('out'), SOURCE);
+      } catch (err) {
+        console.error(err);
+        setStatus('ERROR: ' + err.message, false);
+        return;
+      }
+      if (handle.applied === false) { setStatus(handle.reason || 'nothing to render', false); return; }
+
+      const notationEl = document.getElementById('notation');
+      const valueEl = document.getElementById('value');
+      const countEl = document.getElementById('count');
+      let edits = 0;
+
+      function refresh(detail) {
+        const source = detail ? detail.source : handle.getSource();
+        const value = detail ? detail.value : handle.getValue();
+        notationEl.textContent = source;
+        valueEl.textContent = JSON.stringify(value, null, 2);
+        if (detail) {
+          edits += 1;
+          countEl.textContent = `${edits} edit${edits !== 1 ? 's' : ''}`;
+          setStatus(detail.error ? 'edited — constraints clash on the new graph' : 'edited — notation + value updated', !detail.error);
+        }
+      }
+
+      // Re-derive notation + value on every edit (toolbar, drag, delete…).
+      handle.onChange(refresh);
+      refresh();                       // initial paint
+      setStatus('ready — edit the graph on the left');
+
+      document.getElementById('copy').addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(handle.getSource()); setStatus('notation copied to clipboard'); }
+        catch (_) { window.prompt('spytial-graph notation:', handle.getSource()); }
+      });
+    })();
+  </script>
+</body>
+</html>
