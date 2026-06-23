@@ -1,17 +1,22 @@
 name: Release
 
-# Cut a release by pushing a version tag:
-#   npm version 0.2.0-prototype --no-git-tag-version   # if bumping
-#   git tag v0.2.0-prototype && git push origin v0.2.0-prototype
-# Requires an NPM_TOKEN repository secret (npm automation token).
+# Publishing uses npm trusted publishing (OIDC) — no NPM_TOKEN secret to store.
+#
+# One-time bootstrap (npm has no "pending publisher", so the package must exist
+# on npm before a trusted publisher can be attached):
+#   1. Publish the first version locally:   npm login && npm publish
+#   2. npmjs.com -> spytial-graph -> Settings -> Trusted Publisher, add:
+#        repository: sidprasad/spytial-graph
+#        workflow:   release.yml
+# After that, every `git push origin vX.Y.Z` tag publishes via OIDC here — no token.
 
 on:
   push:
     tags: ['v*']
 
 permissions:
+  id-token: write   # mint the OIDC token npm exchanges for short-lived credentials
   contents: write   # create the GitHub release
-  id-token: write   # npm provenance attestation
 
 jobs:
   release:
@@ -20,12 +25,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: '22'           # trusted publishing needs Node >= 22.14
+      - run: npm install -g npm@latest  # ...and npm >= 11.5.1
       - run: npm test
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
