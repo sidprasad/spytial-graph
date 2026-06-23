@@ -28,9 +28,11 @@ No `npm install` — everything loads from CDN:
 
 ```bash
 npm run serve   # zero-dep static server, port 8100
-# /playground/                 live editor
+# /playground/                 live editor (View ⇄ Edit)
 # /examples/guide.html         the guide, rendered by spytial-graph itself
 # /examples/binary-tree.html   programmatic API demo
+# /examples/editable.html      editable graph — edit visually, re-get the notation
+# /examples/diagrams-that-edit-back.html   "explorable" post built on the editor
 ```
 
 (Any static server works; one is needed only because the pages load ES modules.)
@@ -40,6 +42,9 @@ npm run serve   # zero-dep static server, port 8100
 - **Edges** — `A -> B`, or labeled `A -> B : left` (the label becomes a selector).
 - **Nodes** are implicit from edges; the id is the name, and every node is a rectangle.
   A bracket gives the node a **type**: `A[Person]` makes `selector: Person` match it.
+- **Labels** — the id is the display label by default; set a different one with
+  `A[label="Alice"]` (or `A[Person, label="Alice"]` alongside a type). The id stays the
+  stable identity that edges reference — handy for generated/short ids.
 - **Classes** — `A:::tag` (chainable), or `class A,B,C tag` for several at once.
 - **No header, no direction.** Layout comes from the annotations, not a `TD`/`LR` keyword.
 
@@ -99,6 +104,10 @@ loaded. **[GUIDE.md](GUIDE.md) is the full walkthrough** — the short version:
 up the `<pre><code class="language-spytial-graph">` markup that marked, markdown-it, MkDocs,
 and Docusaurus emit — no plugin needed.
 
+A block tagged ` ```spytial-graph-editable ` (or any block carrying `data-editable`, or
+`autoRender({ editable: true })`) renders the **editor** instead of the read-only view, with a
+*copy notation* button — so docs can ship a graph readers edit and copy back out.
+
 ## Programmatic API
 
 ```js
@@ -120,6 +129,42 @@ A -> C
 
 Lower-level inputs still work and **compose** with annotations: `opts.rules` (raw CnD YAML)
 and the per-class `registerSpec` registry are merged through the shared `mergeSpecStrings`.
+
+## Editable mode
+
+Render the same graph onto spytial-core's `<structured-input-graph>` editor instead of the
+read-only view: add and delete nodes, drag to connect edges, rename relations — constraints
+re-solve live — and **re-get the notation** at any time. That round-trip (`text → visual →
+edit → text`) is the point.
+
+```js
+import { renderSpytialGraphEditable } from 'spytial-graph';
+
+const h = await renderSpytialGraphEditable(document.getElementById('out'), `
+A -> B : left
+A -> C : right
+
+@orientation(selector=left, directions=[left])
+`);
+
+h.onChange(({ source, value }) => {
+  console.log(source); // spytial-graph notation, re-derived from the edited graph
+  console.log(value);  // its reified value — { atoms, relations } JSON
+});
+```
+
+`renderSpytialGraphEditable(container, source, opts)` returns a **handle**:
+
+| handle | |
+|---|---|
+| `getSource()` | re-get spytial-graph notation for the current graph (your `@annotations` re-appended verbatim) |
+| `getValue()` | the reified value — `{ atoms, relations }` JSON |
+| `onChange(cb)` | runs `cb({ source, value, error })` after every edit; returns an unsubscribe fn |
+| `element`, `dataInstance` | the live `<structured-input-graph>` and its data instance |
+
+`serializeToSpytialGraph(data, { annotations })` is that notation serializer on its own — the
+inverse of the render pipeline — for a `{ atoms, relations }` object (or anything with
+`reify()`). The playground's **Edit** toggle and `/examples/editable.html` are built on it.
 
 ## How it renders
 
@@ -146,4 +191,5 @@ Markdown path injects all three. Vendor them locally for an offline deploy.
 - A small notation — nodes, edges, labels, types, classes (see `parse.js`). No
   sequence/state/Gantt/pie diagrams.
 - Edge labels are relations, not free text.
-- No automatic live re-render — call `renderSpytialGraph` again (the playground does this on ⌘⏎).
+- The read-only view doesn't auto-re-render — call `renderSpytialGraph` again (the playground
+  does this on ⌘⏎). For live editing with a notation round-trip, use [editable mode](#editable-mode).

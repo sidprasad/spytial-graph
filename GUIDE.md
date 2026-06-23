@@ -60,6 +60,16 @@ Bob[Person]    -> Acme
 @atomColor(selector=Person, value='#cfe8d8')
 ```
 
+By default a node's **id is its label**. Give it a different display label with
+`label="…"` — handy when the id is short or generated:
+
+```spytial-graph
+u1[label="Alice"] -> u2[label="Bob"]
+```
+
+Combine it with a type as `u1[Person, label="Alice"]`. The id is still what edges
+reference and what selectors and classes match.
+
 Nodes can also be tagged with a class — `A:::tag`, or `class A,B tag` for several
 at once. There is no header and no `TD`/`LR` direction; layout comes from the
 annotations, not a keyword.
@@ -106,3 +116,37 @@ layout and explains the conflict — nothing silently disappears.
 `<pre><code class="language-spytial-graph">`. That's what marked, markdown-it,
 Prism, highlight.js, MkDocs, and Docusaurus produce, so no plugin is needed. To
 render a fragment you injected yourself, call `renderSpytialGraphs(element)`.
+
+## Editable blocks
+
+Tag a block `spytial-graph-editable` instead, and it renders an **editor** rather
+than a static diagram — readers add and delete nodes, drag to connect edges, and
+rename relations, with the constraints re-solving live:
+
+````markdown
+```spytial-graph-editable
+A -> B : left
+A -> C : right
+
+@orientation(selector=left, directions=[left])
+```
+````
+
+Each editable block gets a **copy notation** button that re-derives spytial-graph
+text from the edited graph — so a reader can change your example and copy the
+result back out, `@annotations` and all. (A hand-authored container with
+`data-editable`, or `autoRender({ editable: true })` to make every block editable,
+works too.)
+
+Driving the editor yourself, outside Markdown — the handle re-gets the notation
+(`getSource()`) and the reified value (`getValue()`) on every edit:
+
+```js
+import { renderSpytialGraphEditable } from 'https://cdn.jsdelivr.net/npm/spytial-graph/src/index.js';
+
+const h = await renderSpytialGraphEditable(document.getElementById('out'), 'A -> B\nB -> C');
+h.onChange(({ source, value }) => {
+  console.log(source); // spytial-graph notation, re-derived from the edited graph
+  console.log(value);  // its reified value — { atoms, relations }
+});
+```

@@ -20,8 +20,9 @@ import { parseGraph } from './parse.js';
 import { registerSpec, clearRegistry, mergeSpecsForClasses, mergeSpecStrings } from './registry.js';
 import { relationalize, DEFAULT_RELATION } from './relationalize.js';
 import { extractAnnotations } from './annotations.js';
+import { serializeToSpytialGraph } from './serialize.js';
 
-export { registerSpec, clearRegistry, mergeSpecsForClasses, mergeSpecStrings, extractAnnotations };
+export { registerSpec, clearRegistry, mergeSpecsForClasses, mergeSpecStrings, extractAnnotations, serializeToSpytialGraph };
 
 function getSpytialCore() {
   const s =
@@ -37,19 +38,19 @@ function getSpytialCore() {
   return s;
 }
 
-// Create (or reuse) a <webcola-cnd-graph> element inside `container`. Returns
-// the graph element to pass to renderSpytialGraph. If `container` is already a
-// <webcola-cnd-graph>, it is returned as-is.
-export function mountGraph(container, opts = {}) {
+// Create (or reuse) a custom-element graph of the given tag inside `container`.
+// If `container` already *is* such an element, it's returned as-is; otherwise an
+// existing child of that tag is reused, or a new one is created and appended.
+function mountElement(container, tagName, opts) {
   if (!(container instanceof Element)) {
     throw new Error('mountGraph: container must be an Element');
   }
-  if (container.tagName && container.tagName.toLowerCase() === 'webcola-cnd-graph') {
+  if (container.tagName && container.tagName.toLowerCase() === tagName) {
     return container;
   }
-  let el = container.querySelector('webcola-cnd-graph');
+  let el = container.querySelector(tagName);
   if (!el) {
-    el = document.createElement('webcola-cnd-graph');
+    el = document.createElement(tagName);
     if (opts.width != null) el.setAttribute('width', String(opts.width));
     if (opts.height != null) el.setAttribute('height', String(opts.height));
     if (opts.theme) el.setAttribute('theme', opts.theme);
@@ -57,6 +58,19 @@ export function mountGraph(container, opts = {}) {
     container.appendChild(el);
   }
   return el;
+}
+
+// Create (or reuse) a read-only <webcola-cnd-graph> element inside `container`.
+// Returns the graph element to pass to renderSpytialGraph.
+export function mountGraph(container, opts = {}) {
+  return mountElement(container, 'webcola-cnd-graph', opts);
+}
+
+// Create (or reuse) an editable <structured-input-graph> element inside
+// `container`. Returns the element to pass to renderSpytialGraphEditable. The
+// custom element is registered by spytial-core's global build (≥ 2.9).
+export function mountInputGraph(container, opts = {}) {
+  return mountElement(container, 'structured-input-graph', opts);
 }
 
 // Blank the synthetic `_` name that unlabeled edges carry, so the rendered
@@ -182,4 +196,158 @@ export async function renderSpytialGraph(graphEl, source, opts = {}) {
   }
 
   return { applied, layout, error, selectorErrors, annotationErrors, parsed, data, instance, rules, hiddenRelations };
+}
+
+// ── Editable rendering ───────────────────────────────────────────────────────
+// The same graph, but rendered onto spytial-core's <structured-input-graph>
+// editor instead of the read-only <webcola-cnd-graph>. You can add / delete
+// nodes, drag to connect edges, rename relations — constraints re-solve live —
+// and at any time *re-get the notation* via the handle's getSource(). That
+// round-trip (text → visual → edit → text) is the point.
+
+// Express the selector-only relations as `hideField` directives in authoring
+// YAML. The read-only path mutates a parsed spec's `hiddenFields`; the editor
+// parses a spec *string* internally, so we hand it the directives in YAML and
+// let parseLayoutSpec fold them into hiddenFields (layoutspec maps hideField →
+// hiddenFields). Field names are single-quoted so `_links` / hyphenated classes
+// stay valid scalars.
+function hideFieldsYaml(hiddenRelations) {
+  if (!hiddenRelations || hiddenRelations.length === 0) return '';
+  let out = 'directives:\n';
+  for (const field of hiddenRelations) {
+    out += `  - hideField: { field: '${String(field).replace(/'/g, "''")}' }\n`;
+  }
+  return out;
+}
+
+// The live instance the editor is currently backed by. clearAllItems() swaps in
+// a fresh instance, so always ask the element rather than caching it.
+function liveInstance(el, fallback) {
+  try {
+    return (typeof el.getDataInstance === 'function' && el.getDataInstance()) || fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
+
+// Build the handle returned by renderSpytialGraphEditable.
+function buildEditableHandle(el, initialInstance, annotationLines, meta) {
+  const getValue = () => {
+    const inst = liveInstance(el, initialInstance);
+    return inst && typeof inst.reify === 'function' ? inst.reify() : { atoms: [], relations: [] };
+  };
+  // The headline: re-get spytial-graph notation for the current (edited) graph,
+  // with the original spatial @annotations re-appended verbatim.
+  const getSource = () => serializeToSpytialGraph(getValue(), { annotations: annotationLines });
+
+  // Subscribe to edits. Every mutation — toolbar, drag-to-connect, delete,
+  // keyboard — flows through the data instance, which emits these four events;
+  // that's a more reliable signal than the element's constraint events (which
+  // only fire on error-state transitions). Coalesce a burst of synchronous
+  // mutations (e.g. an edge rename = remove + add) into one callback.
+  function onChange(cb) {
+    if (typeof cb !== 'function') return () => {};
+    const DATA_EVENTS = ['atomAdded', 'atomRemoved', 'relationTupleAdded', 'relationTupleRemoved'];
+    let bound = null;
+    let scheduled = false;
+    const fire = () => {
+      if (scheduled) return;
+      scheduled = true;
+      queueMicrotask(() => {
+        scheduled = false;
+        let error = null;
+        try { error = el.getCurrentConstraintError ? el.getCurrentConstraintError() : null; } catch (_) {}
+        cb({ source: getSource(), value: getValue(), error });
+      });
+    };
+    const unbind = () => {
+      if (bound && typeof bound.removeEventListener === 'function') {
+        for (const ev of DATA_EVENTS) bound.removeEventListener(ev, fire);
+      }
+      bound = null;
+    };
+    const bind = (inst) => {
+      if (!inst || inst === bound || typeof inst.addEventListener !== 'function') return;
+      unbind();
+      for (const ev of DATA_EVENTS) inst.addEventListener(ev, fire);
+      bound = inst;
+    };
+    // "Clear all" replaces the instance — rebind to the new one and report it.
+    const onCleared = () => { bind(liveInstance(el, null)); fire(); };
+    el.addEventListener('all-items-cleared', onCleared);
+    bind(liveInstance(el, initialInstance));
+    return () => { unbind(); el.removeEventListener('all-items-cleared', onCleared); };
+  }
+
+  return {
+    applied: true,
+    element: el,
+    dataInstance: initialInstance,
+    parsed: meta.parsed,
+    annotationErrors: meta.annotationErrors,
+    hiddenRelations: meta.hiddenRelations,
+    rules: meta.rules,
+    getValue,
+    getSource,
+    onChange,
+  };
+}
+
+// Render a spytial-graph `source` onto an editable <structured-input-graph>.
+//
+//   container — an Element to mount into, or a <structured-input-graph> itself
+//   source    — spytial-graph text with inline @annotations (same as renderSpytialGraph)
+//   opts      — { rules?, extraSpec?, width?, height?, theme?, ariaLabel? }
+//
+// Returns a handle:
+//   { applied, element, dataInstance, parsed, annotationErrors, hiddenRelations,
+//     rules, getSource(), getValue(), onChange(cb) → unsubscribe }
+// or { applied:false, reason, ... } if the source has no nodes.
+export async function renderSpytialGraphEditable(container, source, opts = {}) {
+  const spytial = getSpytialCore();
+  const { JSONDataInstance } = spytial;
+  if (!JSONDataInstance) {
+    throw new Error('spytial-graph: spytial-core is missing JSONDataInstance; need spytial-core ≥ 2.9');
+  }
+
+  const el =
+    container && container.tagName && container.tagName.toLowerCase() === 'structured-input-graph'
+      ? container
+      : mountInputGraph(container, opts);
+  if (typeof el.setDataInstance !== 'function' || typeof el.setCnDSpec !== 'function') {
+    throw new Error(
+      'renderSpytialGraphEditable: <structured-input-graph> is not registered. ' +
+        'Load spytial-core ≥ 2.9 (its global build registers the element).'
+    );
+  }
+
+  // 0. lift inline @annotations; keep the raw lines so getSource() can re-append
+  //    them on the round-trip (specYaml is a lossy compiled form).
+  const { source: cleanSource, specYaml: annoYaml, annotationLines, errors: annotationErrors } =
+    extractAnnotations(source);
+
+  const parsed = parseGraph(cleanSource);
+  if (parsed.nodes.size === 0) {
+    return { applied: false, reason: 'no nodes parsed from source', element: el, parsed, annotationErrors };
+  }
+
+  // 1. graph → input-capable data instance (the editor mutates it in place)
+  const { atoms, relations, hiddenRelations } = relationalize(parsed);
+  const instance = new JSONDataInstance({ atoms, relations });
+
+  // 2. layout rules YAML + hideField directives for the selector-only relations,
+  //    merged into the single spec string the editor parses internally.
+  const rules = resolveRules(parsed, opts, annoYaml);
+  const mergedYaml = mergeSpecStrings([rules, hideFieldsYaml(hiddenRelations)]);
+
+  // 3. hand off data + spec; the element owns layout + live constraint enforcement
+  el.setDataInstance(instance);
+  await el.setCnDSpec(mergedYaml);
+
+  return buildEditableHandle(el, instance, annotationLines, {
+    parsed,
+    annotationErrors,
+    hiddenRelations,
+    rules: mergedYaml,
+  });
 }

@@ -30,11 +30,18 @@
 //     import { renderSpytialGraphs } from '.../src/markdown.js';
 //     await renderSpytialGraphs(myContainer);
 
-import { mountGraph, renderSpytialGraph } from './index.js';
+import { mountGraph, renderSpytialGraph, mountInputGraph, renderSpytialGraphEditable } from './index.js';
 
 // Languages that mark a SpyTial graph block. `spytial-graph` is canonical;
 // `spytial` is accepted as an alias.
 const LANGS = ['spytial-graph', 'spytial'];
+
+// Editable variants. Most markdown renderers keep only the first info-string
+// token as the language class, so a dedicated language is the portable way to
+// opt a block into the editor (` ```spytial-graph-editable `). A `data-editable`
+// attribute on the host (hand-authored HTML) works too, as does opts.editable.
+const EDITABLE_LANGS = ['spytial-graph-editable', 'spytial-editable'];
+const ALL_LANGS = [...LANGS, ...EDITABLE_LANGS];
 
 // CSS selectors covering how common markdown renderers tag a fenced block:
 //   marked / markdown-it / Prism / highlight.js → <pre><code class="language-spytial-graph">
@@ -42,7 +49,7 @@ const LANGS = ['spytial-graph', 'spytial'];
 //   hand-authored containers                     → <div class="spytial-graph">
 function blockSelector() {
   const sels = [];
-  for (const lang of LANGS) {
+  for (const lang of ALL_LANGS) {
     sels.push(`pre > code.language-${lang}`);
     sels.push(`code.language-${lang}`);
     sels.push(`pre.language-${lang}`);
@@ -50,6 +57,25 @@ function blockSelector() {
     sels.push(`div.${lang}`);
   }
   return sels.join(', ');
+}
+
+// classList matching is whole-token, so `language-spytial-graph` never matches a
+// `language-spytial-graph-editable` block (the editable langs are distinct).
+function hasLang(el, lang) {
+  return !!(el && el.classList && (el.classList.contains(`language-${lang}`) || el.classList.contains(lang)));
+}
+
+// Should this block render editable? Via a dedicated editable language, a
+// `data-editable` attribute on the host/code, or a global opts.editable.
+function isEditableBlock(el, host, opts) {
+  if (opts && opts.editable) return true;
+  for (const lang of EDITABLE_LANGS) {
+    if (hasLang(el, lang) || hasLang(host, lang)) return true;
+  }
+  const de =
+    (host.getAttribute && host.getAttribute('data-editable')) ??
+    (el.getAttribute && el.getAttribute('data-editable'));
+  return de != null && de !== 'false';
 }
 
 // The element we replace in the DOM: for a <code> inside a <pre>, replace the
@@ -61,14 +87,14 @@ function hostFor(el) {
   return el;
 }
 
-function collectBlocks(root) {
-  const found = new Map(); // host element → source text (dedup by host)
+function collectBlocks(root, opts = {}) {
+  const found = new Map(); // host element → { source, editable } (dedup by host)
   for (const el of root.querySelectorAll(blockSelector())) {
     const host = hostFor(el);
     if (host.dataset && host.dataset.spytialProcessed) continue;
     if (found.has(host)) continue;
     // textContent is entity-decoded, so `-->` and `>` come through verbatim.
-    found.set(host, el.textContent);
+    found.set(host, { source: el.textContent, editable: isEditableBlock(el, host, opts) });
   }
   return found;
 }
@@ -179,24 +205,36 @@ export async function renderSpytialGraphs(root = document, opts = {}) {
     await whenEngineReady(opts.timeoutMs);
   }
 
-  const blocks = collectBlocks(root);
+  const blocks = collectBlocks(root, opts);
   const results = [];
 
-  for (const [host, source] of blocks) {
+  const refit = (graphEl) => {
+    try { graphEl.resetViewToFitContent && graphEl.resetViewToFitContent(); } catch (_) {}
+    setTimeout(() => {
+      try { graphEl.resetViewToFitContent && graphEl.resetViewToFitContent(); } catch (_) {}
+    }, 400);
+  };
+
+  for (const [host, { source, editable }] of blocks) {
     // Per-block height override via `data-height` on the host or its <code>.
     const dataH = host.getAttribute && host.getAttribute('data-height');
     const wrap = makeContainer(doc, dataH ? { ...opts, height: dataH } : opts);
     host.replaceWith(wrap);
 
     try {
-      const graphEl = mountGraph(wrap, { theme: opts.theme });
-      const result = await renderSpytialGraph(graphEl, source);
-      // Re-fit the view once the layout has been drawn.
-      try { graphEl.resetViewToFitContent && graphEl.resetViewToFitContent(); } catch (_) {}
-      setTimeout(() => {
-        try { graphEl.resetViewToFitContent && graphEl.resetViewToFitContent(); } catch (_) {}
-      }, 400);
-      results.push({ host: wrap, applied: result.applied, result });
+      if (editable) {
+        const graphEl = mountInputGraph(wrap, { theme: opts.theme });
+        const handle = await renderSpytialGraphEditable(graphEl, source);
+        refit(graphEl);
+        // A "copy notation" affordance makes the round-trip usable in docs.
+        if (handle && handle.applied !== false) addCopyNotationButton(doc, wrap, handle);
+        results.push({ host: wrap, editable: true, applied: handle && handle.applied, handle });
+      } else {
+        const graphEl = mountGraph(wrap, { theme: opts.theme });
+        const result = await renderSpytialGraph(graphEl, source);
+        refit(graphEl);
+        results.push({ host: wrap, applied: result.applied, result });
+      }
     } catch (err) {
       renderError(doc, wrap, err && err.message ? err.message : String(err));
       results.push({ host: wrap, error: err });
@@ -204,6 +242,32 @@ export async function renderSpytialGraphs(root = document, opts = {}) {
   }
 
   return results;
+}
+
+// A small overlay button that copies an editable block's current graph back to
+// spytial-graph notation (handle.getSource()) — the round-trip, in a doc.
+function addCopyNotationButton(doc, wrap, handle) {
+  const btn = doc.createElement('button');
+  btn.type = 'button';
+  btn.className = 'spytial-graph-copy';
+  btn.textContent = '⧉ notation';
+  btn.title = 'Copy this graph as spytial-graph notation';
+  btn.style.cssText =
+    'position: absolute; top: 8px; right: 8px; z-index: 9; font: inherit; font-size: 12px;' +
+    ' padding: 4px 9px; border: 1px solid #cdd2db; border-radius: 6px; background: #fff;' +
+    ' color: #1d2230; cursor: pointer; opacity: .85;';
+  btn.addEventListener('click', async () => {
+    const text = handle.getSource();
+    try {
+      await navigator.clipboard.writeText(text);
+      const prev = btn.textContent;
+      btn.textContent = '✓ copied';
+      setTimeout(() => { btn.textContent = prev; }, 1200);
+    } catch (_) {
+      window.prompt('spytial-graph notation:', text);
+    }
+  });
+  wrap.appendChild(btn);
 }
 
 // Render every spytial-graph block once the DOM is ready, injecting the engine

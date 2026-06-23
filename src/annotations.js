@@ -169,16 +169,23 @@ function emitEntry(name, kwargs) {
 
 // Extract inline annotations from `rawSource`.
 //
-// Returns { source, specYaml, errors }:
-//   source    — the input with annotation lines removed (feed to parseGraph)
-//   specYaml  — authoring YAML for the compiled constraints/directives, or '' if
-//               none. Shape: `constraints:\n  - <entry>\n directives:\n  - <entry>`
-//   errors    — [{ line, text, message }] for unknown names / malformed args
+// Returns { source, specYaml, annotationLines, errors }:
+//   source          — the input with annotation lines removed (feed to parseGraph)
+//   specYaml        — authoring YAML for the compiled constraints/directives, or
+//                     '' if none. Shape:
+//                     `constraints:\n  - <entry>\n directives:\n  - <entry>`
+//   annotationLines — the raw `@...` lines that compiled successfully, verbatim
+//                     and in source order. The serializer re-appends these to
+//                     round-trip the notation: editing the graph's *data* never
+//                     touches the layout directives, and specYaml is a lossy
+//                     compiled form, so we keep the originals.
+//   errors          — [{ line, text, message }] for unknown names / malformed args
 export function extractAnnotations(rawSource) {
   const lines = String(rawSource ?? '').split(/\r?\n/);
   const kept = [];
   const constraints = [];
   const directives = [];
+  const annotationLines = [];
   const errors = [];
 
   lines.forEach((line, i) => {
@@ -215,6 +222,7 @@ export function extractAnnotations(rawSource) {
       return;
     }
     (isConstraint ? constraints : directives).push(entry);
+    annotationLines.push(line);
   });
 
   const source = kept.join('\n');
@@ -233,5 +241,5 @@ export function extractAnnotations(rawSource) {
     specYaml = out;
   }
 
-  return { source, specYaml, errors };
+  return { source, specYaml, annotationLines, errors };
 }

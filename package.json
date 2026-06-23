@@ -16,7 +16,8 @@
     "GUIDE.md"
   ],
   "scripts": {
-    "serve": "node scripts/preview-server.mjs"
+    "serve": "node scripts/preview-server.mjs",
+    "test": "node test/roundtrip.test.mjs"
   },
   "peerDependencies": {
     "spytial-core": ">=2.9"

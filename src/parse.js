@@ -5,7 +5,7 @@
 // annotations.js), so a `graph TD` preamble would do nothing. Leave it out.
 //
 // Returns { nodes, edges, classesPerNode }:
-//   nodes:           Map<id, { id, type }>   (type is null unless given as [Type])
+//   nodes:           Map<id, { id, type, label }>   (type/label null unless given)
 //   edges:           Array<{ source, target, kind, label }>
 //   classesPerNode:  Map<id, Set<string>>
 //
@@ -13,10 +13,13 @@
 //   A -> B               an edge
 //   A -> B : left        a labeled edge (the label becomes a selector)
 // Nodes (a node is implicit from any edge; the id is its name):
-//   A                    bare id
+//   A                    bare id (the id is also the display label)
 //   A[Person]            a typed node — `Person` is the node's type, so
 //                        `selector: Person` matches every Person node. All nodes
 //                        render as rectangles; the bracket is a type, not a shape.
+//   A[label="Alice"]     a display label distinct from the id (mermaid-style;
+//                        without one, the id is the label)
+//   A[Person, label="Alice"]   a type and a label together
 //   A:::tag              class tag (chainable: A:::x:::y)
 //   class A,B,C tag      assign a class to several nodes
 // Comments:  %% rest-of-line
@@ -39,6 +42,35 @@ function stripComments(line) {
   return i === -1 ? line : line.slice(0, i);
 }
 
+// Strip one layer of surrounding quotes, if present.
+function unquote(s) {
+  const t = s.trim();
+  if (t.length >= 2 && (t[0] === '"' || t[0] === "'") && t[t.length - 1] === t[0]) {
+    return t.slice(1, -1);
+  }
+  return t;
+}
+
+// Parse a node bracket's inner text into { type, label }. The bracket holds the
+// node's type (a bareword, as before) and/or an explicit `label="…"`:
+//   [Person]                 → type Person
+//   [label="Alice"]          → label Alice
+//   [Person, label="Alice"]  → both
+// Without a label the id is used as the label (handled downstream).
+function parseBracketInner(inner) {
+  let label = null;
+  let rest = inner;
+  // Pull out `label=…` (quoted or bareword up to the next comma) anywhere inside.
+  const lm = inner.match(/(^|,)\s*label\s*=\s*("[^"]*"|'[^']*'|[^,]*)/i);
+  if (lm) {
+    label = unquote(lm[2]);
+    rest = inner.slice(0, lm.index) + inner.slice(lm.index + lm[0].length);
+  }
+  // Whatever remains (commas removed) is the type bareword.
+  const type = unquote(rest.replace(/,/g, ' ').trim());
+  return { type: type || null, label: label !== '' ? label : null };
+}
+
 function parseNodeExpr(raw) {
   // Pull off chained `:::class` tags first so they don't confuse type parsing.
   const classes = [];
@@ -53,13 +85,14 @@ function parseNodeExpr(raw) {
   const id = m[1];
   const rest = m[2].trim();
 
-  // An optional [Type] annotation after the id.
+  // An optional [Type] / [label="…"] annotation after the id.
   let type = null;
+  let label = null;
   if (rest) {
     const tm = rest.match(TYPE_BRACKET);
-    if (tm) type = tm[1].replace(/^["']|["']$/g, '').trim() || null;
+    if (tm) ({ type, label } = parseBracketInner(tm[1]));
   }
-  return { id, type, classes };
+  return { id, type, label, classes };
 }
 
 function findArrow(line) {
@@ -116,10 +149,12 @@ export function parseGraph(source) {
   const addNode = (n) => {
     if (!n) return;
     if (!nodes.has(n.id)) {
-      nodes.set(n.id, { id: n.id, type: n.type });
-    } else if (n.type != null) {
-      // Prefer an explicit [Type] when it appears on any mention of the node.
-      nodes.get(n.id).type = n.type;
+      nodes.set(n.id, { id: n.id, type: n.type, label: n.label });
+    } else {
+      // Prefer an explicit [Type] / label="…" when it appears on any mention.
+      const existing = nodes.get(n.id);
+      if (n.type != null) existing.type = n.type;
+      if (n.label != null) existing.label = n.label;
     }
     for (const c of n.classes) addClass(n.id, c);
   };
