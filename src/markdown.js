@@ -168,15 +168,150 @@ export async function ensureEngineLoaded(opts = {}) {
   await whenEngineReady(opts.timeoutMs);
 }
 
-function makeContainer(doc, opts) {
-  const wrap = doc.createElement('div');
-  wrap.className = 'spytial-graph-rendered';
-  wrap.dataset.spytialProcessed = '1';
-  const h = opts.height != null ? opts.height : 360;
-  wrap.style.cssText =
-    `position: relative; width: 100%; height: ${typeof h === 'number' ? h + 'px' : h};` +
-    ' border: 1px solid #e2e5ea; border-radius: 8px; overflow: hidden; margin: 12px 0; background: #fff;';
-  return wrap;
+// Build the framed "device" that wraps one diagram: a Diagram/Source tab bar on
+// top, a fixed-height stage (the graph, plus a hidden source view), and — when a
+// clash occurs — an attached, collapsible conflict panel inside the same border,
+// so the UNSAT report obviously belongs to the diagram and not the page prose.
+//
+// Returns refs + a couple of hooks:
+//   graphHost            — mount the graph element into this
+//   conflict             — the conflict region (passed to showCoreConflict)
+//   setSourceProvider(fn)— fn() returns the current notation for the Source tab
+//   setRefit(fn)         — called when the Diagram tab is re-shown
+function buildDevice(doc, opts, height) {
+  const h = height != null && height !== '' ? height : (opts.height != null ? opts.height : 360);
+  // A bare number (or numeric string like "320") means pixels; anything else
+  // (e.g. "60vh") is used verbatim. Without this, `height: 320` is invalid CSS
+  // and the stage collapses to 0.
+  const hCss = (typeof h === 'number' || /^\d+(\.\d+)?$/.test(String(h).trim()))
+    ? parseFloat(h) + 'px'
+    : String(h);
+  const dark = opts.theme === 'dark';
+  const C = dark
+    ? { border: '#2a2f38', bg: '#181b21', chrome: '#1f232b', ink: '#e8eaee', soft: '#a7b0bd', accent: '#3fae74',
+        warnBg: '#3a1b18', warnInk: '#f3b5ab', warnBorder: '#5b2a23', warnAccent: '#e0796b', warnSlot: '#211311' }
+    : { border: '#e2e5ea', bg: '#ffffff', chrome: '#f7f8fa', ink: '#1d2230', soft: '#5b6472', accent: '#2d8659',
+        warnBg: '#f8d7da', warnInk: '#842029', warnBorder: '#f1aeb5', warnAccent: '#dc3545', warnSlot: '#fffafa' };
+  const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+
+  const device = doc.createElement('div');
+  device.className = 'spytial-graph-device';
+  device.dataset.spytialProcessed = '1';
+  device.style.cssText =
+    `margin: 12px 0; border: 1px solid ${C.border}; border-radius: 8px; overflow: hidden; background: ${C.bg};`;
+
+  // ── tab bar: Diagram | Source ──
+  const tabs = doc.createElement('div');
+  tabs.style.cssText =
+    `display: flex; background: ${C.chrome}; border-bottom: 1px solid ${C.border}; font: 12px/1 ${SANS};`;
+  const mkTab = (label) => {
+    const b = doc.createElement('button');
+    b.type = 'button'; b.textContent = label;
+    b.style.cssText =
+      'appearance: none; border: none; background: transparent; cursor: pointer;' +
+      ` padding: 8px 14px; color: ${C.soft}; font: inherit; border-bottom: 2px solid transparent;`;
+    return b;
+  };
+  const tabDiagram = mkTab('Diagram');
+  const tabSource = mkTab('Source');
+  tabs.appendChild(tabDiagram); tabs.appendChild(tabSource);
+  device.appendChild(tabs);
+
+  // ── stage: holds the diagram and the (hidden) source view ──
+  const stage = doc.createElement('div');
+  // overflow:hidden keeps the graph clipped to its frame so it can't spill over
+  // the conflict panel below (the editable element doesn't clip its own canvas).
+  stage.style.cssText = `position: relative; width: 100%; height: ${hCss}; overflow: hidden;`;
+  const graphHost = doc.createElement('div');
+  graphHost.className = 'spytial-graph-rendered';
+  graphHost.dataset.spytialProcessed = '1';
+  graphHost.style.cssText = 'position: absolute; inset: 0;';
+  stage.appendChild(graphHost);
+
+  const sourceView = doc.createElement('div');
+  sourceView.style.cssText = `position: absolute; inset: 0; display: none; overflow: auto; background: ${C.bg};`;
+  const sourcePre = doc.createElement('pre');
+  sourcePre.style.cssText =
+    'margin: 0; padding: 14px 16px; white-space: pre; tab-size: 2;' +
+    ` font: 12.5px/1.6 "SF Mono","JetBrains Mono","Fira Code",ui-monospace,Menlo,Consolas,monospace; color: ${C.ink};`;
+  const copyBtn = doc.createElement('button');
+  copyBtn.type = 'button'; copyBtn.textContent = '⧉ Copy';
+  copyBtn.style.cssText =
+    `position: absolute; top: 8px; right: 8px; font: 12px ${SANS}; padding: 4px 10px; cursor: pointer;` +
+    ` border: 1px solid ${C.border}; border-radius: 6px; background: ${C.chrome}; color: ${C.ink}; opacity: .92;`;
+  sourceView.appendChild(sourcePre); sourceView.appendChild(copyBtn);
+  stage.appendChild(sourceView);
+  device.appendChild(stage);
+
+  // ── conflict region (attached, below the stage, inside the border) ──
+  const conflict = doc.createElement('div');
+  conflict.className = 'spytial-graph-conflict';
+  conflict.style.cssText =
+    `display: none; border-top: 1px solid ${C.warnBorder}; border-left: 3px solid ${C.warnAccent};`;
+  const cHeader = doc.createElement('button');
+  cHeader.type = 'button';
+  cHeader.style.cssText =
+    'appearance: none; width: 100%; text-align: left; cursor: pointer; border: none;' +
+    ` display: flex; align-items: center; gap: 8px; padding: 10px 12px;` +
+    ` font: 700 13px/1.3 ${SANS}; background: ${C.warnBg}; color: ${C.warnInk};`;
+  const cLabel = doc.createElement('span');
+  cLabel.textContent = '⚠ These rules can’t all hold';
+  const cChevron = doc.createElement('span');
+  cChevron.textContent = '▾';
+  cChevron.style.cssText = 'margin-left: auto; font-size: 11px; opacity: .8;';
+  cHeader.appendChild(cLabel); cHeader.appendChild(cChevron);
+  const conflictSlot = doc.createElement('div');
+  conflictSlot.className = 'spytial-graph-conflict-slot';
+  conflictSlot.style.cssText = `padding: 10px 12px 12px; max-height: 340px; overflow: auto; background: ${C.warnSlot};`;
+  conflict.appendChild(cHeader); conflict.appendChild(conflictSlot);
+  conflict._labelEl = cLabel;   // showCoreConflict sets the headline text
+  device.appendChild(conflict);
+
+  // ── behaviors ──
+  let active = 'diagram';
+  let getSource = () => '';
+  let refit = () => {};
+  const styleTabs = () => {
+    for (const [b, name] of [[tabDiagram, 'diagram'], [tabSource, 'source']]) {
+      const on = active === name;
+      b.style.color = on ? C.ink : C.soft;
+      b.style.borderBottomColor = on ? C.accent : 'transparent';
+      b.style.background = on ? C.bg : 'transparent';
+      b.style.fontWeight = on ? '600' : '400';
+    }
+  };
+  const setTab = (name) => {
+    active = name;
+    const src = name === 'source';
+    sourceView.style.display = src ? 'block' : 'none';
+    graphHost.style.display = src ? 'none' : 'block';
+    if (src) sourcePre.textContent = getSource();
+    else setTimeout(refit, 0);
+    styleTabs();
+  };
+  tabDiagram.addEventListener('click', () => setTab('diagram'));
+  tabSource.addEventListener('click', () => setTab('source'));
+  copyBtn.addEventListener('click', async () => {
+    const text = getSource();
+    try {
+      await navigator.clipboard.writeText(text);
+      const prev = copyBtn.textContent; copyBtn.textContent = '✓ Copied';
+      setTimeout(() => { copyBtn.textContent = prev; }, 1200);
+    } catch (_) { window.prompt('spytial-graph notation:', text); }
+  });
+  let collapsed = false;
+  cHeader.addEventListener('click', () => {
+    collapsed = !collapsed;
+    conflictSlot.style.display = collapsed ? 'none' : 'block';
+    cChevron.textContent = collapsed ? '▸' : '▾';
+  });
+  styleTabs();
+
+  return {
+    device, graphHost, conflict,
+    setSourceProvider: (fn) => { getSource = fn; },
+    setRefit: (fn) => { refit = fn; },
+  };
 }
 
 function renderError(doc, host, message) {
@@ -218,92 +353,57 @@ export async function renderSpytialGraphs(root = document, opts = {}) {
   for (const [host, { source, editable }] of blocks) {
     // Per-block height override via `data-height` on the host or its <code>.
     const dataH = host.getAttribute && host.getAttribute('data-height');
-
-    // Outer block owns the vertical rhythm: the graph sits in a fixed-height
-    // frame, and any constraint-clash explanation (the UNSAT core) renders in a
-    // slot *below* it — never overlapping the diagram.
-    const outer = doc.createElement('div');
-    outer.className = 'spytial-graph-block';
-    outer.dataset.spytialProcessed = '1';
-    outer.style.cssText = 'margin: 12px 0;';
-    const wrap = makeContainer(doc, dataH ? { ...opts, height: dataH } : opts);
-    wrap.style.margin = '0';
-    outer.appendChild(wrap);
-    host.replaceWith(outer);
-
-    const conflictSlot = doc.createElement('div');
-    conflictSlot.className = 'spytial-graph-conflict-slot';
-    conflictSlot.style.cssText = 'margin-top: 8px; display: none;';
-    outer.appendChild(conflictSlot);
+    const ui = buildDevice(doc, opts, dataH);
+    host.replaceWith(ui.device);
 
     try {
       if (editable) {
-        const graphEl = mountInputGraph(wrap, { theme: opts.theme });
+        const graphEl = mountInputGraph(ui.graphHost, { theme: opts.theme });
         const handle = await renderSpytialGraphEditable(graphEl, source);
+        ui.setRefit(() => refit(graphEl));
         refit(graphEl);
-        // A "copy notation" affordance makes the round-trip usable in docs.
-        if (handle && handle.applied !== false) addCopyNotationButton(doc, wrap, handle);
-        // Surface the UNSAT core below the graph, and keep it live: every edit
-        // re-reads the element's constraint error, so resolving the clash (e.g.
-        // deleting the offending edge) clears the panel on the spot.
+        // The Source tab shows the *current* (live-edited) notation.
+        ui.setSourceProvider(() => {
+          try { return (handle && handle.getSource && handle.getSource()) || source; }
+          catch (_) { return source; }
+        });
+        // Surface the UNSAT core, attached below the graph, and keep it live:
+        // every edit re-reads the element's constraint error, so resolving the
+        // clash (e.g. deleting the offending edge) clears the panel on the spot.
         const readErr = () => {
           try { return graphEl.getCurrentConstraintError ? graphEl.getCurrentConstraintError() : null; }
           catch (_) { return null; }
         };
-        showCoreConflict(doc, conflictSlot, readErr(), null);
+        showCoreConflict(doc, ui.conflict, readErr(), null);
         setTimeout(() => {
           const e = readErr();
-          if (e) showCoreConflict(doc, conflictSlot, e, null);
-          else clearCoreConflict(conflictSlot);
+          if (e) showCoreConflict(doc, ui.conflict, e, null);
+          else clearCoreConflict(ui.conflict);
         }, 500);
         if (handle && typeof handle.onChange === 'function') {
           handle.onChange(({ error }) => {
-            if (error) showCoreConflict(doc, conflictSlot, error, null);
-            else clearCoreConflict(conflictSlot);
+            if (error) showCoreConflict(doc, ui.conflict, error, null);
+            else clearCoreConflict(ui.conflict);
           });
         }
-        results.push({ host: wrap, editable: true, applied: handle && handle.applied, handle });
+        results.push({ host: ui.graphHost, editable: true, applied: handle && handle.applied, handle });
       } else {
-        const graphEl = mountGraph(wrap, { theme: opts.theme });
+        const graphEl = mountGraph(ui.graphHost, { theme: opts.theme });
         const result = await renderSpytialGraph(graphEl, source);
+        ui.setRefit(() => refit(graphEl));
         refit(graphEl);
+        ui.setSourceProvider(() => source);
         // A clash still draws the best-feasible layout; explain it below.
-        showCoreConflict(doc, conflictSlot, result.error, result.selectorErrors);
-        results.push({ host: wrap, applied: result.applied, result });
+        showCoreConflict(doc, ui.conflict, result.error, result.selectorErrors);
+        results.push({ host: ui.graphHost, applied: result.applied, result });
       }
     } catch (err) {
-      renderError(doc, wrap, err && err.message ? err.message : String(err));
-      results.push({ host: wrap, error: err });
+      renderError(doc, ui.graphHost, err && err.message ? err.message : String(err));
+      results.push({ host: ui.graphHost, error: err });
     }
   }
 
   return results;
-}
-
-// A small overlay button that copies an editable block's current graph back to
-// spytial-graph notation (handle.getSource()) — the round-trip, in a doc.
-function addCopyNotationButton(doc, wrap, handle) {
-  const btn = doc.createElement('button');
-  btn.type = 'button';
-  btn.className = 'spytial-graph-copy';
-  btn.textContent = '⧉ notation';
-  btn.title = 'Copy this graph as spytial-graph notation';
-  btn.style.cssText =
-    'position: absolute; top: 8px; right: 8px; z-index: 9; font: inherit; font-size: 12px;' +
-    ' padding: 4px 9px; border: 1px solid #cdd2db; border-radius: 6px; background: #fff;' +
-    ' color: #1d2230; cursor: pointer; opacity: .85;';
-  btn.addEventListener('click', async () => {
-    const text = handle.getSource();
-    try {
-      await navigator.clipboard.writeText(text);
-      const prev = btn.textContent;
-      btn.textContent = '✓ copied';
-      setTimeout(() => { btn.textContent = prev; }, 1200);
-    } catch (_) {
-      window.prompt('spytial-graph notation:', text);
-    }
-  });
-  wrap.appendChild(btn);
 }
 
 // ── Constraint-clash explanation (the UNSAT core) ───────────────────────────
@@ -377,26 +477,33 @@ function dispatchConflict(error, selectorErrors) {
   }
 }
 
-// Show the IIS for `slot`'s diagram, in the slot below it, via spytial-core's
-// component. No clash → clears instead.
-async function showCoreConflict(doc, slot, error, selectorErrors) {
-  if (!error && !(selectorErrors && selectorErrors.length)) { clearCoreConflict(slot); return; }
+// Show the IIS for a diagram's conflict region (built by buildDevice), via
+// spytial-core's component. No clash → clears instead.
+async function showCoreConflict(doc, conflict, error, selectorErrors) {
+  if (!error && !(selectorErrors && selectorErrors.length)) { clearCoreConflict(conflict); return; }
   if (!(await ensureErrorComponent())) return;
   const host = getErrorHost(doc);
-  if (_errOwner && _errOwner !== slot) _errOwner.style.display = 'none';
-  slot.style.display = '';
+  const slot = conflict.querySelector('.spytial-graph-conflict-slot');
+  if (conflict._labelEl) {
+    conflict._labelEl.textContent = (selectorErrors && selectorErrors.length)
+      ? '⚠ A selector didn’t resolve'
+      : '⚠ These rules can’t all hold';
+  }
+  if (_errOwner && _errOwner !== conflict) _errOwner.style.display = 'none';
+  conflict.style.display = 'block';
   slot.appendChild(host);                 // relocate the single modal under this diagram
   if (!_errMounted) { window.mountErrorMessageModal(host.id); _errMounted = true; }
-  _errOwner = slot;
+  _errOwner = conflict;
   window.clearAllErrors && window.clearAllErrors();
   dispatchConflict(error, selectorErrors);
 }
 
-// Clear the IIS if `slot` is the one currently showing it (e.g. an edit fixed it).
-function clearCoreConflict(slot) {
-  if (_errOwner === slot) {
+// Clear the IIS if `conflict` is the region currently showing it (edit fixed it).
+function clearCoreConflict(conflict) {
+  if (_errOwner === conflict) {
     window.clearAllErrors && window.clearAllErrors();
-    slot.style.display = 'none';
+    conflict.style.display = 'none';
+    _errOwner = null;
   }
 }
 
