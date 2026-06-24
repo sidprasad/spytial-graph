@@ -218,8 +218,23 @@ export async function renderSpytialGraphs(root = document, opts = {}) {
   for (const [host, { source, editable }] of blocks) {
     // Per-block height override via `data-height` on the host or its <code>.
     const dataH = host.getAttribute && host.getAttribute('data-height');
+
+    // Outer block owns the vertical rhythm: the graph sits in a fixed-height
+    // frame, and any constraint-clash explanation (the UNSAT core) renders in a
+    // slot *below* it — never overlapping the diagram.
+    const outer = doc.createElement('div');
+    outer.className = 'spytial-graph-block';
+    outer.dataset.spytialProcessed = '1';
+    outer.style.cssText = 'margin: 12px 0;';
     const wrap = makeContainer(doc, dataH ? { ...opts, height: dataH } : opts);
-    host.replaceWith(wrap);
+    wrap.style.margin = '0';
+    outer.appendChild(wrap);
+    host.replaceWith(outer);
+
+    const conflictSlot = doc.createElement('div');
+    conflictSlot.className = 'spytial-graph-conflict-slot';
+    conflictSlot.style.cssText = 'margin-top: 8px; display: none;';
+    outer.appendChild(conflictSlot);
 
     try {
       if (editable) {
@@ -228,11 +243,32 @@ export async function renderSpytialGraphs(root = document, opts = {}) {
         refit(graphEl);
         // A "copy notation" affordance makes the round-trip usable in docs.
         if (handle && handle.applied !== false) addCopyNotationButton(doc, wrap, handle);
+        // Surface the UNSAT core below the graph, and keep it live: every edit
+        // re-reads the element's constraint error, so resolving the clash (e.g.
+        // deleting the offending edge) clears the panel on the spot.
+        const readErr = () => {
+          try { return graphEl.getCurrentConstraintError ? graphEl.getCurrentConstraintError() : null; }
+          catch (_) { return null; }
+        };
+        showCoreConflict(doc, conflictSlot, readErr(), null);
+        setTimeout(() => {
+          const e = readErr();
+          if (e) showCoreConflict(doc, conflictSlot, e, null);
+          else clearCoreConflict(conflictSlot);
+        }, 500);
+        if (handle && typeof handle.onChange === 'function') {
+          handle.onChange(({ error }) => {
+            if (error) showCoreConflict(doc, conflictSlot, error, null);
+            else clearCoreConflict(conflictSlot);
+          });
+        }
         results.push({ host: wrap, editable: true, applied: handle && handle.applied, handle });
       } else {
         const graphEl = mountGraph(wrap, { theme: opts.theme });
         const result = await renderSpytialGraph(graphEl, source);
         refit(graphEl);
+        // A clash still draws the best-feasible layout; explain it below.
+        showCoreConflict(doc, conflictSlot, result.error, result.selectorErrors);
         results.push({ host: wrap, applied: result.applied, result });
       }
     } catch (err) {
@@ -268,6 +304,100 @@ function addCopyNotationButton(doc, wrap, handle) {
     }
   });
   wrap.appendChild(btn);
+}
+
+// ── Constraint-clash explanation (the UNSAT core) ───────────────────────────
+// Reuse spytial-core's own IIS/error component — the same one the playground
+// mounts — instead of re-implementing the report. Its React build is lazy-loaded
+// the first time a clash appears, so conflict-free pages never pay for it. The
+// component is backed by a *page-level singleton* error store (window.show*Error
+// → one shared state), so we keep a single mounted modal and relocate it below
+// whichever diagram currently has the displayed clash: one IIS panel at a time,
+// which is what the component is designed for.
+const ERROR_COMPONENT_JS =
+  'https://cdn.jsdelivr.net/npm/spytial-core@2.9.1/dist/components/react-component-integration.global.js';
+const ERROR_COMPONENT_CSS =
+  'https://cdn.jsdelivr.net/npm/spytial-core@2.9.1/dist/components/react-component-integration.css';
+
+let _errLoading = null;   // promise: the lazy component load
+let _errHost = null;      // the single <div> the modal renders into
+let _errMounted = false;  // has mountErrorMessageModal run for _errHost yet?
+let _errOwner = null;     // the conflict slot currently showing the modal
+
+function errorComponentReady() {
+  return typeof window !== 'undefined' && typeof window.mountErrorMessageModal === 'function';
+}
+
+// Lazily inject spytial-core's React error component (JS + CSS), once.
+async function ensureErrorComponent() {
+  if (errorComponentReady()) return true;
+  if (!_errLoading) {
+    _errLoading = (async () => {
+      if (!document.querySelector(`link[href="${ERROR_COMPONENT_CSS}"]`)) {
+        const l = document.createElement('link');
+        l.rel = 'stylesheet'; l.href = ERROR_COMPONENT_CSS;
+        document.head.appendChild(l);
+      }
+      await loadScript(ERROR_COMPONENT_JS);
+    })();
+  }
+  try { await _errLoading; } catch (_) {}
+  return errorComponentReady();
+}
+
+function getErrorHost(doc) {
+  if (_errHost) return _errHost;
+  const div = doc.createElement('div');
+  div.id = 'spytial-graph-iis-host';
+  div.className = 'spytial-graph-iis';
+  _errHost = div;
+  return div;
+}
+
+// Map a layout error onto spytial-core's show* API — the exact dispatch the
+// playground uses in its handleConflict().
+function dispatchConflict(error, selectorErrors) {
+  if (selectorErrors && selectorErrors.length) {
+    window.showSelectorErrors && window.showSelectorErrors(selectorErrors);
+    return;
+  }
+  if (!error) return;
+  if (error.errorMessages) {
+    if (error.type === 'hidden-node-conflict' && window.showHiddenNodeConflict) {
+      window.showHiddenNodeConflict(error.errorMessages);
+    } else if (window.showPositionalError) {
+      window.showPositionalError(error.errorMessages);
+    } else if (window.showGeneralError) {
+      window.showGeneralError(error.message);
+    }
+  } else if (error.overlappingNodes || error.type === 'group-overlap') {
+    window.showGroupOverlapError && window.showGroupOverlapError(error.message, error.source);
+  } else {
+    window.showGeneralError && window.showGeneralError(error.message);
+  }
+}
+
+// Show the IIS for `slot`'s diagram, in the slot below it, via spytial-core's
+// component. No clash → clears instead.
+async function showCoreConflict(doc, slot, error, selectorErrors) {
+  if (!error && !(selectorErrors && selectorErrors.length)) { clearCoreConflict(slot); return; }
+  if (!(await ensureErrorComponent())) return;
+  const host = getErrorHost(doc);
+  if (_errOwner && _errOwner !== slot) _errOwner.style.display = 'none';
+  slot.style.display = '';
+  slot.appendChild(host);                 // relocate the single modal under this diagram
+  if (!_errMounted) { window.mountErrorMessageModal(host.id); _errMounted = true; }
+  _errOwner = slot;
+  window.clearAllErrors && window.clearAllErrors();
+  dispatchConflict(error, selectorErrors);
+}
+
+// Clear the IIS if `slot` is the one currently showing it (e.g. an edit fixed it).
+function clearCoreConflict(slot) {
+  if (_errOwner === slot) {
+    window.clearAllErrors && window.clearAllErrors();
+    slot.style.display = 'none';
+  }
 }
 
 // Render every spytial-graph block once the DOM is ready, injecting the engine
