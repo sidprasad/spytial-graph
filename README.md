@@ -110,9 +110,13 @@ loaded. **[GUIDE.md](GUIDE.md) is the full walkthrough** — the short version:
 up the `<pre><code class="language-spytial-graph">` markup that marked, markdown-it, MkDocs,
 and Docusaurus emit — no plugin needed.
 
-A block tagged ` ```spytial-graph-editable ` (or any block carrying `data-editable`, or
-`autoRender({ editable: true })`) renders the **editor** instead of the read-only view, with a
-*copy notation* button — so docs can ship a graph readers edit and copy back out.
+Every embed frames the diagram beside a collapsible **Source** panel that mirrors the live
+notation (read-only blocks open with it collapsed to a thin rail; click to reveal). A block
+tagged ` ```spytial-graph-editable ` (or any block carrying `data-editable`, or
+`autoRender({ editable: true })`) renders the **editor** and opens that panel as a text editor
+too: drag the graph *or* edit the text and **Run ▸** (⌘⏎) it back in, the two staying in sync —
+and **⧉ Copy** lifts the notation out. So docs can ship a graph readers edit both ways and copy
+back out.
 
 ## Programmatic API
 

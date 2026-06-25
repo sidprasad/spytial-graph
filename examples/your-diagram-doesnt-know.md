@@ -71,10 +71,11 @@ c[Carol] -> b        : reports
 @orientation(selector=reports, directions=[below])
 ```
 
-Drag a node, add one, connect it — then hit **⧉ notation** in the corner. That's
-your edited graph, as text you can paste back into the repo. The picture and the
-source aren't two artifacts you keep in sync by hand. They're one object seen
-from two sides. Edit either; the other is just a projection away.
+Drag a node, add one, connect it — and watch the **Source** panel beside it rewrite
+itself. Or edit that text and **Run ▸** it back in. Either way you've got your graph
+as text you can paste into the repo. The picture and the source aren't two artifacts
+you keep in sync by hand. They're one object seen from two sides. Edit either; the
+other is just a projection away.
 
 ## Small on purpose
 

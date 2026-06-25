@@ -66,7 +66,9 @@ Give each block a height — the diagram fills its container:
 ```
 
 For an **editor** instead of a static view, use `class="spytial-graph-editable"`
-(or add `data-editable` to the div). It renders with a *copy notation* button.
+(or add `data-editable` to the div). It opens with the **Source** panel beside the
+diagram as a live text editor — drag the graph or edit the text and **Run ▸** (⌘⏎)
+it in, both directions staying in sync — plus **⧉ Copy** to lift the notation out.
 
 Two things to know: the page must be **served** (any static server) rather than
 opened as `file://`, because the tag is an ES module; and the `npm`-CDN URL above
@@ -171,11 +173,12 @@ A -> C : right
 ```
 ````
 
-Each editable block gets a **copy notation** button that re-derives spytial-graph
-text from the edited graph — so a reader can change your example and copy the
-result back out, `@annotations` and all. (A hand-authored container with
-`data-editable`, or `autoRender({ editable: true })` to make every block editable,
-works too.)
+Each editable block sits beside a collapsible **Source** panel that re-derives
+spytial-graph text from the edited graph on every edit — and is editable itself:
+type notation and **Run ▸** (⌘⏎) to push it into the diagram, the two staying in
+sync. **⧉ Copy** lifts the result back out, `@annotations` and all. (A hand-authored
+container with `data-editable`, or `autoRender({ editable: true })` to make every
+block editable, works too.)
 
 Driving the editor yourself, outside Markdown — the handle re-gets the notation
 (`getSource()`) and the reified value (`getValue()`) on every edit:

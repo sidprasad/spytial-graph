@@ -168,17 +168,32 @@ export async function ensureEngineLoaded(opts = {}) {
   await whenEngineReady(opts.timeoutMs);
 }
 
-// Build the framed "device" that wraps one diagram: a Diagram/Source tab bar on
-// top, a fixed-height stage (the graph, plus a hidden source view), and — when a
+// Build the framed "device" that wraps one diagram: a collapsible Source panel
+// on the left, sitting *beside* the diagram (not behind a tab), and — when a
 // clash occurs — an attached, collapsible conflict panel inside the same border,
 // so the UNSAT report obviously belongs to the diagram and not the page prose.
 //
-// Returns refs + a couple of hooks:
+// The split is "live": the Source panel mirrors the current notation, so editing
+// the diagram (in the editable variant) updates the text on the spot. Read-only
+// embeds open with the source collapsed (a clean diagram); editable embeds open
+// expanded, since two-way editing is the point.
+//
+// `editable` makes the Source panel a real <textarea> with a Run ▸ button — text →
+// diagram is an *explicit* apply (Run ▸ / ⌘⏎ re-renders), not continuous binding,
+// which would fight the normalizing serializer (caret jumps, dropped %% comments,
+// lost node positions mid-type). Diagram → text stays live.
+//
+// Returns refs + hooks:
 //   graphHost            — mount the graph element into this
 //   conflict             — the conflict region (passed to showCoreConflict)
-//   setSourceProvider(fn)— fn() returns the current notation for the Source tab
-//   setRefit(fn)         — called when the Diagram tab is re-shown
-function buildDevice(doc, opts, height) {
+//   setSourceProvider(fn)— fn() returns the current notation shown in the panel
+//   setRefit(fn)         — called when the diagram's area resizes (collapse/apply)
+//   setApply(fn)         — fn(text) re-renders the diagram from edited text;
+//                          resolves to { ok, message? } (editable only)
+//   setSourceText(t,f)   — push diagram→text into the panel (won't clobber unsaved
+//                          typing unless forced)
+//   refreshSource(f)     — re-pull from the provider into the panel
+function buildDevice(doc, opts, height, editable) {
   const h = height != null && height !== '' ? height : (opts.height != null ? opts.height : 360);
   // A bare number (or numeric string like "320") means pixels; anything else
   // (e.g. "60vh") is used verbatim. Without this, `height: 320` is invalid CSS
@@ -188,11 +203,22 @@ function buildDevice(doc, opts, height) {
     : String(h);
   const dark = opts.theme === 'dark';
   const C = dark
-    ? { border: '#2a2f38', bg: '#181b21', chrome: '#1f232b', ink: '#e8eaee', soft: '#a7b0bd', accent: '#3fae74',
+    ? { border: '#2a2f38', bg: '#181b21', chrome: '#1f232b', ink: '#e8eaee', soft: '#a7b0bd', accent: '#3fae74', accentInk: '#06140c',
         warnBg: '#3a1b18', warnInk: '#f3b5ab', warnBorder: '#5b2a23', warnAccent: '#e0796b', warnSlot: '#211311' }
-    : { border: '#e2e5ea', bg: '#ffffff', chrome: '#f7f8fa', ink: '#1d2230', soft: '#5b6472', accent: '#2d8659',
+    : { border: '#e2e5ea', bg: '#ffffff', chrome: '#f7f8fa', ink: '#1d2230', soft: '#5b6472', accent: '#2d8659', accentInk: '#ffffff',
         warnBg: '#f8d7da', warnInk: '#842029', warnBorder: '#f1aeb5', warnAccent: '#dc3545', warnSlot: '#fffafa' };
   const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  const MONO = '"SF Mono","JetBrains Mono","Fira Code",ui-monospace,Menlo,Consolas,monospace';
+  const BREAK = 520;   // below this device width, stack the source above the diagram
+
+  const mkBtn = (label, title) => {
+    const b = doc.createElement('button');
+    b.type = 'button'; b.textContent = label; if (title) b.title = title;
+    b.style.cssText =
+      `appearance: none; cursor: pointer; font: 11px/1 ${SANS}; padding: 4px 9px; white-space: nowrap;` +
+      ` border: 1px solid ${C.border}; border-radius: 6px; background: ${C.bg}; color: ${C.ink};`;
+    return b;
+  };
 
   const device = doc.createElement('div');
   device.className = 'spytial-graph-device';
@@ -200,50 +226,98 @@ function buildDevice(doc, opts, height) {
   device.style.cssText =
     `margin: 12px 0; border: 1px solid ${C.border}; border-radius: 8px; overflow: hidden; background: ${C.bg};`;
 
-  // ── tab bar: Diagram | Source ──
-  const tabs = doc.createElement('div');
-  tabs.style.cssText =
-    `display: flex; background: ${C.chrome}; border-bottom: 1px solid ${C.border}; font: 12px/1 ${SANS};`;
-  const mkTab = (label) => {
-    const b = doc.createElement('button');
-    b.type = 'button'; b.textContent = label;
-    b.style.cssText =
-      'appearance: none; border: none; background: transparent; cursor: pointer;' +
-      ` padding: 8px 14px; color: ${C.soft}; font: inherit; border-bottom: 2px solid transparent;`;
-    return b;
-  };
-  const tabDiagram = mkTab('Diagram');
-  const tabSource = mkTab('Source');
-  tabs.appendChild(tabDiagram); tabs.appendChild(tabSource);
-  device.appendChild(tabs);
+  // ── frame: [ source (LHS, collapsible) | diagram ] ──
+  const frame = doc.createElement('div');
+  frame.style.cssText = `display: flex; width: 100%; height: ${hCss}; align-items: stretch;`;
+  device.appendChild(frame);
 
-  // ── stage: holds the diagram and the (hidden) source view ──
-  const stage = doc.createElement('div');
+  // ── source column (collapsible) ──
+  const sourceCol = doc.createElement('div');
+  sourceCol.className = 'spytial-graph-source';
+  sourceCol.style.cssText = `flex: 0 0 auto; display: flex; min-width: 0; overflow: hidden; background: ${C.chrome};`;
+  frame.appendChild(sourceCol);
+
+  // expanded: header (title + actions) over the source body
+  const panelExpanded = doc.createElement('div');
+  panelExpanded.style.cssText = 'display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; min-width: 0;';
+  const srcHeader = doc.createElement('div');
+  srcHeader.style.cssText =
+    `flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 6px 8px;` +
+    ` border-bottom: 1px solid ${C.border}; background: ${C.chrome};`;
+  const collapseBtn = doc.createElement('button');
+  collapseBtn.type = 'button'; collapseBtn.textContent = '◂'; collapseBtn.title = 'Hide source';
+  collapseBtn.style.cssText =
+    `appearance: none; border: none; background: transparent; cursor: pointer; color: ${C.soft}; font: 13px/1 ${SANS}; padding: 2px 4px;`;
+  const srcTitle = doc.createElement('span');
+  srcTitle.textContent = 'Source';
+  srcTitle.style.cssText = `font: 600 10.5px/1 ${SANS}; letter-spacing: .06em; text-transform: uppercase; color: ${C.soft};`;
+  const srcStatus = doc.createElement('span');
+  srcStatus.style.cssText = `flex: 0 1 auto; min-width: 0; font: 11px/1.2 ${SANS}; color: ${C.warnAccent}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;`;
+  const srcSpacer = doc.createElement('span');
+  srcSpacer.style.cssText = 'flex: 1 1 6px; min-width: 6px;';
+  srcHeader.appendChild(collapseBtn);
+  srcHeader.appendChild(srcTitle);
+  srcHeader.appendChild(srcStatus);
+  srcHeader.appendChild(srcSpacer);
+  let runBtn = null;
+  if (editable) {
+    runBtn = mkBtn('Run ▸', 'Apply the notation to the diagram (⌘⏎)');
+    srcHeader.appendChild(runBtn);
+  }
+  const copyBtn = mkBtn('⧉ Copy', 'Copy the notation');
+  srcHeader.appendChild(copyBtn);
+
+  // the source body: an editable <textarea> (editable) or a read-only <pre>
+  const srcBody = doc.createElement('div');
+  srcBody.style.cssText = `flex: 1 1 0; min-height: 0; overflow: auto; background: ${C.bg};`;
+  let srcPre = null, srcTextarea = null;
+  if (editable) {
+    srcBody.style.display = 'flex';
+    srcBody.style.flexDirection = 'column';
+    srcTextarea = doc.createElement('textarea');
+    srcTextarea.spellcheck = false;
+    srcTextarea.setAttribute('aria-label', 'Diagram source — edit, then Run (⌘⏎)');
+    srcTextarea.style.cssText =
+      `flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box; resize: none; border: none; outline: none;` +
+      ` padding: 12px 14px; margin: 0; tab-size: 2; white-space: pre; overflow: auto;` +
+      ` background: ${C.bg}; color: ${C.ink}; font: 12.5px/1.6 ${MONO};`;
+    srcBody.appendChild(srcTextarea);
+  } else {
+    srcPre = doc.createElement('pre');
+    srcPre.style.cssText =
+      `margin: 0; padding: 12px 14px; white-space: pre; tab-size: 2; color: ${C.ink}; font: 12.5px/1.6 ${MONO};`;
+    srcBody.appendChild(srcPre);
+  }
+  panelExpanded.appendChild(srcHeader);
+  panelExpanded.appendChild(srcBody);
+  sourceCol.appendChild(panelExpanded);
+
+  // collapsed: a thin rail that re-opens the source on click
+  const panelRail = doc.createElement('button');
+  panelRail.type = 'button'; panelRail.title = 'Show source';
+  panelRail.style.cssText =
+    `display: none; align-items: center; justify-content: center; gap: 7px; cursor: pointer; appearance: none;` +
+    ` border: none; background: ${C.chrome}; color: ${C.soft}; width: 100%; height: 100%;` +
+    ` font: 600 10.5px/1 ${SANS}; letter-spacing: .08em; text-transform: uppercase;`;
+  const railChev = doc.createElement('span'); railChev.textContent = '▸';
+  railChev.style.cssText = 'writing-mode: horizontal-tb;';   // keep the arrow upright in a vertical rail
+  const railLabel = doc.createElement('span'); railLabel.textContent = 'Source';
+  panelRail.appendChild(railChev); panelRail.appendChild(railLabel);
+  sourceCol.appendChild(panelRail);
+
+  // ── diagram stage ──
   // overflow:hidden keeps the graph clipped to its frame so it can't spill over
   // the conflict panel below (the editable element doesn't clip its own canvas).
-  stage.style.cssText = `position: relative; width: 100%; height: ${hCss}; overflow: hidden;`;
+  const graphStage = doc.createElement('div');
+  graphStage.style.cssText = `flex: 1 1 0; position: relative; min-width: 0; overflow: hidden; height: ${hCss};`;
   const graphHost = doc.createElement('div');
   graphHost.className = 'spytial-graph-rendered';
   graphHost.dataset.spytialProcessed = '1';
   graphHost.style.cssText = 'position: absolute; inset: 0;';
-  stage.appendChild(graphHost);
+  graphStage.appendChild(graphHost);
+  frame.appendChild(graphStage);
 
-  const sourceView = doc.createElement('div');
-  sourceView.style.cssText = `position: absolute; inset: 0; display: none; overflow: auto; background: ${C.bg};`;
-  const sourcePre = doc.createElement('pre');
-  sourcePre.style.cssText =
-    'margin: 0; padding: 14px 16px; white-space: pre; tab-size: 2;' +
-    ` font: 12.5px/1.6 "SF Mono","JetBrains Mono","Fira Code",ui-monospace,Menlo,Consolas,monospace; color: ${C.ink};`;
-  const copyBtn = doc.createElement('button');
-  copyBtn.type = 'button'; copyBtn.textContent = '⧉ Copy';
-  copyBtn.style.cssText =
-    `position: absolute; top: 8px; right: 8px; font: 12px ${SANS}; padding: 4px 10px; cursor: pointer;` +
-    ` border: 1px solid ${C.border}; border-radius: 6px; background: ${C.chrome}; color: ${C.ink}; opacity: .92;`;
-  sourceView.appendChild(sourcePre); sourceView.appendChild(copyBtn);
-  stage.appendChild(sourceView);
-  device.appendChild(stage);
-
-  // ── conflict region (attached, below the stage, inside the border) ──
+  // ── conflict region (attached, below the frame, inside the border) ──
   const conflict = doc.createElement('div');
   conflict.className = 'spytial-graph-conflict';
   conflict.style.cssText =
@@ -268,29 +342,79 @@ function buildDevice(doc, opts, height) {
   device.appendChild(conflict);
 
   // ── behaviors ──
-  let active = 'diagram';
+  let collapsed = !editable;     // editable opens expanded; read-only opens collapsed
+  let dirty = false;             // unsaved edits in the textarea (editable only)
+  let lastNarrow = null;
   let getSource = () => '';
   let refit = () => {};
-  const styleTabs = () => {
-    for (const [b, name] of [[tabDiagram, 'diagram'], [tabSource, 'source']]) {
-      const on = active === name;
-      b.style.color = on ? C.ink : C.soft;
-      b.style.borderBottomColor = on ? C.accent : 'transparent';
-      b.style.background = on ? C.bg : 'transparent';
-      b.style.fontWeight = on ? '600' : '400';
+  let applyFn = null;
+
+  const isNarrow = () => device.clientWidth > 0 && device.clientWidth < BREAK;
+
+  // Emphasize Run when there are unsaved text edits to apply.
+  const styleRun = () => {
+    if (!runBtn) return;
+    const on = dirty;
+    runBtn.style.background = on ? C.accent : C.bg;
+    runBtn.style.color = on ? C.accentInk : C.ink;
+    runBtn.style.borderColor = on ? C.accent : C.border;
+  };
+
+  // Lay the source/diagram out for the current collapsed + width state. Row by
+  // default (source on the left); below BREAK, stack the source on top.
+  function relayout() {
+    const narrow = isNarrow();
+    frame.style.flexDirection = narrow ? 'column' : 'row';
+    frame.style.height = narrow ? 'auto' : hCss;
+    graphStage.style.height = hCss;
+    graphStage.style.flex = narrow ? '0 0 auto' : '1 1 0';
+
+    panelExpanded.style.display = collapsed ? 'none' : 'flex';
+    panelRail.style.display = collapsed ? 'flex' : 'none';
+
+    // separate source from diagram along whichever axis they're stacked on
+    sourceCol.style.borderRight = !narrow ? `1px solid ${C.border}` : 'none';
+    sourceCol.style.borderBottom = narrow ? `1px solid ${C.border}` : 'none';
+
+    if (collapsed) {
+      if (narrow) {
+        sourceCol.style.width = '100%'; sourceCol.style.height = 'auto';
+        panelRail.style.writingMode = 'horizontal-tb'; panelRail.style.padding = '8px 12px';
+        railChev.textContent = '▾';
+      } else {
+        sourceCol.style.width = '30px'; sourceCol.style.height = '';
+        panelRail.style.writingMode = 'vertical-rl'; panelRail.style.padding = '12px 0';
+        railChev.textContent = '▸';
+      }
+    } else if (narrow) {
+      sourceCol.style.width = '100%'; sourceCol.style.height = '170px';
+    } else {
+      sourceCol.style.width = 'clamp(200px, 38%, 380px)'; sourceCol.style.height = '';
+    }
+
+    // a reflow between row/column changes the diagram's box — re-fit once
+    if (lastNarrow !== null && lastNarrow !== narrow) setTimeout(refit, 0);
+    lastNarrow = narrow;
+  }
+
+  // Push notation into the panel. In editable mode, don't yank text out from
+  // under the user mid-edit (focused or unsaved) unless forced (initial / apply).
+  const setSourceText = (text, force) => {
+    if (srcTextarea) {
+      if (!force && (dirty || doc.activeElement === srcTextarea)) return;
+      srcTextarea.value = text == null ? '' : text;
+      dirty = false; srcStatus.textContent = ''; styleRun();
+    } else if (srcPre) {
+      srcPre.textContent = text == null ? '' : text;
     }
   };
-  const setTab = (name) => {
-    active = name;
-    const src = name === 'source';
-    sourceView.style.display = src ? 'block' : 'none';
-    graphHost.style.display = src ? 'none' : 'block';
-    if (src) sourcePre.textContent = getSource();
-    else setTimeout(refit, 0);
-    styleTabs();
-  };
-  tabDiagram.addEventListener('click', () => setTab('diagram'));
-  tabSource.addEventListener('click', () => setTab('source'));
+  const refreshSource = (force) => setSourceText(getSource(), force);
+
+  const expand = () => { collapsed = false; relayout(); refreshSource(); setTimeout(refit, 0); };
+  const collapse = () => { collapsed = true; relayout(); setTimeout(refit, 0); };
+  collapseBtn.addEventListener('click', collapse);
+  panelRail.addEventListener('click', expand);
+
   copyBtn.addEventListener('click', async () => {
     const text = getSource();
     try {
@@ -299,18 +423,63 @@ function buildDevice(doc, opts, height) {
       setTimeout(() => { copyBtn.textContent = prev; }, 1200);
     } catch (_) { window.prompt('spytial-graph notation:', text); }
   });
-  let collapsed = false;
+
+  // text → diagram: explicit apply (Run ▸ / ⌘⏎). Re-render, then snap the panel
+  // to the canonical round-trip so what's shown matches the diagram exactly.
+  async function doApply() {
+    if (!applyFn || !srcTextarea) return;
+    const prev = runBtn ? runBtn.textContent : '';
+    if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Running…'; }
+    srcStatus.textContent = '';
+    let res;
+    try { res = await applyFn(srcTextarea.value); }
+    catch (err) { res = { ok: false, message: err && err.message ? err.message : String(err) }; }
+    if (runBtn) { runBtn.disabled = false; runBtn.textContent = prev || 'Run ▸'; }
+    if (res && res.ok) {
+      refreshSource(true);
+    } else {
+      srcStatus.textContent = '⚠ ' + ((res && res.message) || 'could not apply');
+      srcStatus.title = srcStatus.textContent;
+    }
+  }
+  if (runBtn) runBtn.addEventListener('click', doApply);
+  if (srcTextarea) {
+    srcTextarea.addEventListener('input', () => { dirty = true; srcStatus.textContent = ''; styleRun(); });
+    srcTextarea.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); doApply(); }
+    });
+  }
+
+  let cCollapsed = false;
   cHeader.addEventListener('click', () => {
-    collapsed = !collapsed;
-    conflictSlot.style.display = collapsed ? 'none' : 'block';
-    cChevron.textContent = collapsed ? '▸' : '▾';
+    cCollapsed = !cCollapsed;
+    conflictSlot.style.display = cCollapsed ? 'none' : 'block';
+    cChevron.textContent = cCollapsed ? '▸' : '▾';
   });
-  styleTabs();
+
+  relayout();
+  styleRun();
+  // Re-flow on width changes (row ⇄ column stacking at BREAK). A ResizeObserver
+  // catches container-only changes (e.g. a sidebar toggle); a window-resize
+  // listener is the broadly-compatible fallback for viewport changes. Keep the
+  // observer referenced on the element — an unreferenced ResizeObserver can be
+  // GC'd, which silently stops it firing.
+  if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(() => relayout());
+    ro.observe(device);
+    device._spytialResizeObserver = ro;
+  }
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('resize', relayout);
+  }
 
   return {
     device, graphHost, conflict,
     setSourceProvider: (fn) => { getSource = fn; },
     setRefit: (fn) => { refit = fn; },
+    setApply: (fn) => { applyFn = fn; },
+    setSourceText,
+    refreshSource,
   };
 }
 
@@ -353,20 +522,14 @@ export async function renderSpytialGraphs(root = document, opts = {}) {
   for (const [host, { source, editable }] of blocks) {
     // Per-block height override via `data-height` on the host or its <code>.
     const dataH = host.getAttribute && host.getAttribute('data-height');
-    const ui = buildDevice(doc, opts, dataH);
+    const ui = buildDevice(doc, opts, dataH, editable);
     host.replaceWith(ui.device);
 
     try {
       if (editable) {
         const graphEl = mountInputGraph(ui.graphHost, { theme: opts.theme });
-        const handle = await renderSpytialGraphEditable(graphEl, source);
         ui.setRefit(() => refit(graphEl));
-        refit(graphEl);
-        // The Source tab shows the *current* (live-edited) notation.
-        ui.setSourceProvider(() => {
-          try { return (handle && handle.getSource && handle.getSource()) || source; }
-          catch (_) { return source; }
-        });
+
         // Surface the UNSAT core, attached below the graph, and keep it live:
         // every edit re-reads the element's constraint error, so resolving the
         // clash (e.g. deleting the offending edge) clears the panel on the spot.
@@ -374,18 +537,53 @@ export async function renderSpytialGraphs(root = document, opts = {}) {
           try { return graphEl.getCurrentConstraintError ? graphEl.getCurrentConstraintError() : null; }
           catch (_) { return null; }
         };
-        showCoreConflict(doc, ui.conflict, readErr(), null);
-        setTimeout(() => {
-          const e = readErr();
+        const reflectConflict = (err) => {
+          const e = err !== undefined ? err : readErr();
           if (e) showCoreConflict(doc, ui.conflict, e, null);
           else clearCoreConflict(ui.conflict);
-        }, 500);
-        if (handle && typeof handle.onChange === 'function') {
-          handle.onChange(({ error }) => {
-            if (error) showCoreConflict(doc, ui.conflict, error, null);
-            else clearCoreConflict(ui.conflict);
+        };
+
+        let handle = null;
+        let unsub = null;
+        let applying = false;   // ignore the diagram→text echo while re-rendering from text
+
+        // (Re)bind to a handle: the Source panel mirrors its notation, and edits
+        // flow back into the panel — unless we're mid-apply (our own re-render).
+        const wire = (h) => {
+          if (unsub) { unsub(); unsub = null; }
+          handle = h;
+          ui.setSourceProvider(() => {
+            try { return (handle && handle.getSource && handle.getSource()) || source; }
+            catch (_) { return source; }
           });
-        }
+          if (h && typeof h.onChange === 'function') {
+            unsub = h.onChange(({ source: s, error }) => {
+              if (applying) return;
+              ui.setSourceText(s);          // diagram → text (keeps unsaved typing)
+              reflectConflict(error || null);
+            });
+          }
+        };
+
+        // text → diagram: explicit Run ▸ / ⌘⏎ re-renders onto the same element.
+        ui.setApply(async (text) => {
+          applying = true;
+          let h;
+          try { h = await renderSpytialGraphEditable(graphEl, text); }
+          catch (err) { applying = false; return { ok: false, message: err && err.message ? err.message : String(err) }; }
+          applying = false;
+          if (h && h.applied === false) return { ok: false, message: h.reason || 'no nodes parsed from source' };
+          wire(h);
+          refit(graphEl);
+          reflectConflict();
+          return { ok: true };
+        });
+
+        wire(await renderSpytialGraphEditable(graphEl, source));
+        refit(graphEl);
+        ui.refreshSource(true);             // initial notation into the (expanded) textarea
+        reflectConflict();
+        setTimeout(reflectConflict, 500);
         results.push({ host: ui.graphHost, editable: true, applied: handle && handle.applied, handle });
       } else {
         const graphEl = mountGraph(ui.graphHost, { theme: opts.theme });
@@ -393,6 +591,7 @@ export async function renderSpytialGraphs(root = document, opts = {}) {
         ui.setRefit(() => refit(graphEl));
         refit(graphEl);
         ui.setSourceProvider(() => source);
+        ui.refreshSource(true);
         // A clash still draws the best-feasible layout; explain it below.
         showCoreConflict(doc, ui.conflict, result.error, result.selectorErrors);
         results.push({ host: ui.graphHost, applied: result.applied, result });
