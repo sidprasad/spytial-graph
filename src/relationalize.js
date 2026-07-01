@@ -13,16 +13,20 @@
 //     - <class>  — the nodes carrying a class  (`class A,B team` → `team`),
 //                  for node annotations like @group / @atomColor
 //
-// Atom type = the node's `:::Sort` tag (`A:::Person` → 'Person') or 'Node' for a
-// plain `A`, so `selector: Person` targets every Person node. The atom's label is
-// the node's [bracket] text if given, else the id; the id is always the stable
-// identity (what edges reference). Class names (from `class …` lines) are stored
-// on each atom under `labels.classes`.
+// Atom type = the node's `:::Sort` tag (`A:::Person` → 'Person') or '' (untyped)
+// for a plain `A`. An untyped atom carries no named type, so only `univ` (the
+// universal set, which spytial-core appends to every atom's type hierarchy)
+// selects it — a plain node isn't targeted by any `selector: <Name>`. The atom's
+// label is the node's [bracket] text if given, else the id; the id is always the
+// stable identity (what edges reference). Class names (from `class …` lines) are
+// stored on each atom under `labels.classes`.
 
-// The type a plain `A` carries (vs. an explicit `A:::Person`). Exported so the
-// inverse serializer (serialize.js) knows which type is the implicit default and
-// can omit it.
-export const DEFAULT_TYPE = 'Node';
+// The type a plain `A` carries (vs. an explicit `A:::Person`): the empty string,
+// i.e. "no type declared". Exported so the inverse serializer (serialize.js)
+// knows which type is the implicit default and can omit it. Empty string is
+// falsy, so serialize.js's `atom.type && atom.type !== DEFAULT_TYPE` guards drop
+// the `:::sort` suffix for untyped nodes without any special-casing.
+export const DEFAULT_TYPE = '';
 
 // Relation carrying unlabeled edges. index.js blanks this name on the rendered
 // edges (an unlabeled edge shouldn't display its synthetic relation name).

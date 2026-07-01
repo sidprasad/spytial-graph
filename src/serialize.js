@@ -10,7 +10,8 @@
 //
 // The mapping mirrors relationalize.js exactly:
 //   atom                       → a node; `label !== id` ⇒ [label] (mermaid-style),
-//                                `type !== 'Node'` ⇒ :::sort
+//                                a non-default type (anything but DEFAULT_TYPE,
+//                                the empty "untyped" default) ⇒ :::sort
 //   `_` relation               → unlabeled edges            (A -> B)
 //   named binary relation      → labeled edges              (A -> B : name)
 //   `_links` relation          → skipped (selector-only; duplicates the drawn
